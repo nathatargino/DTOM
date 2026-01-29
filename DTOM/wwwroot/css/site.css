@@ -289,3 +289,38 @@ body {
     background: var(--neon-color);
     border-radius: 3px;
 }
+
+/* --- RODAPÉ PERSONALIZADO --- */
+.dtom-footer {
+    background-color: #0B0E11;
+    border-top: 1px solid var(--border-color);
+    padding: 20px 0;
+    position: absolute;
+    bottom: 0;
+    width: 100%;
+    font-size: 0.85rem;
+    color: #6E7681;
+}
+
+.dev-name {
+    color: var(--neon-color);
+    text-decoration: none;
+    font-weight: 600;
+    transition: all 0.3s;
+}
+
+    .dev-name:hover {
+        text-shadow: 0 0 8px var(--neon-color);
+        color: white;
+    }
+
+.footer-socials a {
+    color: #6E7681;
+    font-size: 1.1rem;
+    margin-left: 15px;
+    transition: color 0.2s;
+}
+
+    .footer-socials a:hover {
+        color: var(--neon-color);
+    }
