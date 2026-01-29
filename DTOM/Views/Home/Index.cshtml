@@ -1,8 +1,101 @@
 ﻿@{
-    ViewData["Title"] = "Home Page";
+    ViewData["Title"] = "DTOM Call - Dashboard";
 }
 
-<div class="text-center">
-    <h1 class="display-4">Welcome</h1>
-    <p>Learn about <a href="https://learn.microsoft.com/aspnet/core">building Web apps with ASP.NET Core</a>.</p>
+<div class="dtom-wrapper">
+    <div class="container py-5">
+        <header class="d-flex justify-content-between align-items-center mb-5">
+            <div>
+                <h1 class="dtom-logo">DTOM<span>.net</span></h1>
+                <p class="text-muted">Comunicação Descentralizada & Sem Fronteiras</p>
+            </div>
+            <div id="connection-status" class="status-badge">
+                <span class="dot"></span> Offline
+            </div>
+        </header>
+
+        <div class="row g-4">
+            <div class="col-lg-8">
+                <div class="dtom-card main-player mb-4">
+                    <div class="card-header-vibe">
+                        <i class="bi bi-music-note-list"></i>
+                        <span>Adicionar música</span>
+                    </div>
+
+                    <div class="player-body">
+                        <div class="input-container">
+                            <input type="text" id="musicUrl" placeholder="Cole a URL do YouTube aqui..." class="modern-input">
+                            <button id="btnTransmitir" class="neon-button">
+                                <i class="bi bi-play-fill"></i> ADICIONAR
+                            </button>
+                        </div>
+
+                        <div class="now-playing mt-4">
+                            <div class="pulse-icon"></div>
+                            <span id="player-status">Aguardando comando na rede...</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="dtom-card">
+                    <h5 class="mb-3">
+                        <i class="bi bi-chat-dots"></i> Chat em Tempo Real
+                    </h5>
+                    <div id="chat-messages" class="chat-messages">
+                    </div>
+
+                    <div class="chat-input-container mt-3">
+                        <input type="text" id="chat-input" placeholder="Digite sua mensagem..." class="chat-input" maxlength="500">
+                        <button id="btnSendChat" class="chat-send-btn">
+                            <i class="bi bi-send-fill"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-4">
+                <div class="dtom-card sidebar h-100">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="m-0">Canais de Voz</h5>
+                        <button id="btnJoinVoice" class="voice-join-btn">
+                            <i class="bi bi-mic-fill"></i> ENTRAR
+                        </button>
+                    </div>
+
+                    <div class="room-item active">
+                        <div class="d-flex align-items-center justify-content-between">
+                            <span><i class="bi bi-volume-up-fill me-2 text-cyan"></i> Geral</span>
+                            <span class="badge rounded-pill bg-dark border-cyan text-cyan" style="font-size: 0.6rem;">LIVE</span>
+                        </div>
+
+                        <div class="user-list-mini mt-2" id="user-list">
+                        </div>
+                    </div>
+
+                    <div class="modal fade" id="loginModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1" aria-hidden="true">
+                        <div class="modal-dialog modal-dialog-centered">
+                            <div class="modal-content dtom-modal">
+                                <div class="modal-body text-center p-5">
+                                    <h2 class="dtom-logo mb-4">DTOM<span>.net</span></h2>
+                                    <p class="text-muted mb-4">Insira seu codinome para acessar a rede.</p>
+
+                                    <div class="mb-4">
+                                        <input type="text" id="userNameInput" class="modern-input w-100 mb-2" style="border-radius: 8px;" placeholder="Digite seu codinome..." maxlength="15">
+                                        <small class="text-info" style="font-size: 0.7rem; letter-spacing: 1px;">IDENTIFICAÇÃO REQUERIDA</small>
+                                    </div>
+
+                                    <button id="btnConfirmLogin" class="neon-button w-100" style="border-radius: 8px;">
+                                        <i class="bi bi-shield-check me-2"></i> ACESSAR REDE
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="remote-audios" style="display:none;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
+
+<audio id="dtomPlayer"></audio>
