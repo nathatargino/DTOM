@@ -21,7 +21,6 @@ document.addEventListener("DOMContentLoaded", function () {
     chatInputElement = document.getElementById("chat-input");
     chatSendButton = document.getElementById("btnSendChat");
 
-    // Elementos do Modal de Login
     const loginModalElement = document.getElementById('loginModal');
     const loginModal = new bootstrap.Modal(loginModalElement);
     const userNameInput = document.getElementById('userNameInput');
@@ -52,6 +51,23 @@ document.addEventListener("DOMContentLoaded", function () {
         div.innerHTML = `<strong>${escapeHtml(userName)}:</strong> <span>${escapeHtml(message)}</span> <small>${timestamp}</small>`;
         chatMessagesElement.appendChild(div);
         chatMessagesElement.scrollTop = chatMessagesElement.scrollHeight;
+    });
+
+    // --- 🎵 NOVO: LISTENER DE MÚSICA (YOUTUBE) ---
+    connection.on("PlayMusic", (streamUrl, startTime) => {
+        if (!audioPlayer) return;
+        console.log("📡 MENSAGEM RECEBIDA DO SERVIDOR! URL:", streamUrl);
+
+        addSystemMessage("🎶 Nova frequência de áudio sintonizada.");
+
+        audioPlayer.src = streamUrl;
+        audioPlayer.play().then(() => {
+            if (startTime > 0) audioPlayer.currentTime = startTime;
+            if (playerStatus) playerStatus.innerText = "Sintonizado: Transmissão ativa";
+        }).catch(err => {
+            console.error("Erro na reprodução:", err);
+            addSystemMessage("❌ Erro ao decodificar stream de áudio.");
+        });
     });
 
     // --- LISTENERS DE VOZ (WEBRTC) ---
@@ -93,20 +109,15 @@ document.addEventListener("DOMContentLoaded", function () {
             statusBadge.innerHTML = '<span class="dot"></span> Online';
             statusBadge.classList.add("connected");
         }
-
         loginModal.show();
-
-        // Foca no campo de texto assim que o modal abrir
         loginModalElement.addEventListener('shown.bs.modal', () => {
             userNameInput.focus();
         });
     }).catch(err => console.error("Erro SignalR:", err));
 
-    // Lógica de Confirmação de Login
     function performLogin() {
         let userName = userNameInput.value.trim();
         if (!userName) userName = "Anônimo_" + Math.floor(Math.random() * 100);
-
         currentUserName = userName;
         connection.invoke("SetUserName", userName).then(() => {
             addSystemMessage(`👋 Bem-vindo à rede, ${userName}!`);
@@ -124,17 +135,14 @@ document.addEventListener("DOMContentLoaded", function () {
             leaveVoice();
             return;
         }
-
         try {
             localStream = await navigator.mediaDevices.getUserMedia({
                 audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
             });
-
             btn.classList.add("active");
             btn.innerText = "SAIR";
             btn.style.backgroundColor = "#ff4444";
             addSystemMessage("🎙️ Você entrou na call.");
-
             monitorVolume(localStream, connection.connectionId);
             await connection.invoke("JoinVoice");
         } catch (err) {
@@ -163,14 +171,12 @@ document.addEventListener("DOMContentLoaded", function () {
         const pc = new RTCPeerConnection(rtcConfig);
         peerConnections[senderId] = pc;
         if (localStream) localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-
         pc.ontrack = (e) => {
             const audio = new Audio();
             audio.srcObject = e.streams[0];
             audio.play();
             monitorVolume(e.streams[0], senderId);
         };
-
         pc.onicecandidate = (e) => {
             if (e.candidate) connection.invoke("SendIceCandidate", senderId, e.candidate);
         };
@@ -184,7 +190,6 @@ document.addEventListener("DOMContentLoaded", function () {
         analyser.fftSize = 256;
         source.connect(analyser);
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
-
         function checkVolume() {
             analyser.getByteFrequencyData(dataArray);
             let values = 0;
@@ -214,13 +219,47 @@ document.addEventListener("DOMContentLoaded", function () {
     chatSendButton?.addEventListener("click", handleSendMessage);
     chatInputElement?.addEventListener("keypress", (e) => { if (e.key === 'Enter') handleSendMessage(); });
     document.getElementById("btnJoinVoice")?.addEventListener("click", joinVoice);
-    document.getElementById("btnTransmitir")?.addEventListener("click", () => {
-        if (musicUrlInput.value) connection.invoke("RequestMusic", musicUrlInput.value);
-    });
-});
 
-function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+    // --- 🎵 ADICIONAR MÚSICA (VERSÃO DEBUG) ---
+    document.getElementById("btnTransmitir")?.addEventListener("click", function () {
+        const btn = this;
+        const url = musicUrlInput.value.trim();
+
+        if (url) {
+            console.log("1. Botão clicado. URL:", url);
+            btn.disabled = true;
+            btn.innerHTML = '<i class="bi bi-hourglass-split"></i> ADICIONAR';
+
+            console.log("2. Chamando connection.invoke('RequestMusic')...");
+            connection.invoke("RequestMusic", url)
+                .then(() => {
+                    console.log("3. O Servidor respondeu ao Invoke com sucesso!");
+                    musicUrlInput.value = "";
+                    addSystemMessage("🚀 Requisição enviada. Aguarde o processamento do servidor.");
+                })
+                .catch(err => {
+                    console.error("❌ ERRO NO INVOKE:", err);
+                    addSystemMessage("❌ Erro ao chamar o servidor.");
+                })
+                .finally(() => {
+                    console.log("4. Finalizado processo de clique.");
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="bi bi-play-fill"></i> ADICIONAR';
+                });
+        }
+    });
+
+}); // <--- CHAVE E PARÊNTESES QUE FECHAM O DOMCONTENTLOADED
+
+// --- FUNÇÕES AUXILIARES (FORA DO DOMCONTENTLOADED) ---
+function escapeHtml(t) {
+    const d = document.createElement('div');
+    d.textContent = t;
+    return d.innerHTML;
+}
+
 function addSystemMessage(m) {
+    const chatMessagesElement = document.getElementById("chat-messages");
     if (!chatMessagesElement) return;
     const div = document.createElement("div");
     div.className = "chat-message";

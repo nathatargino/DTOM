@@ -1,3 +1,6 @@
+using DTOM.Services;
+using DTOM.Hubs;
+
 namespace DTOM
 {
     public class Program
@@ -9,11 +12,14 @@ namespace DTOM
             // Add services to the container.
             builder.Services.AddControllersWithViews();
 
-            // --- INSERÇÃO 1: Habilita o SignalR nos serviços ---
+            // 1. Habilita o SignalR
             builder.Services.AddSignalR();
 
-            // Registro do serviço de música (Injeção de Dependência)
-            builder.Services.AddSingleton<DTOM.Services.MusicService>();
+            // 2. Suporte ao HttpClient (Essencial para o Proxy de Áudio)
+            builder.Services.AddHttpClient();
+
+            // 3. Registro do serviço de música (Apenas uma vez)
+            builder.Services.AddSingleton<MusicService>();
 
             var app = builder.Build();
 
@@ -35,9 +41,8 @@ namespace DTOM
                 name: "default",
                 pattern: "{controller=Home}/{action=Index}/{id?}");
 
-            // --- INSERÇÃO 2: Mapeia o caminho (endpoint) do seu Hub ---
-            // É através deste "/dtomHub" que o JavaScript vai se conectar
-            app.MapHub<DTOM.Hubs.DtomHub>("/dtomHub");
+            // 4. Mapeia o Hub do SignalR
+            app.MapHub<DtomHub>("/dtomHub");
 
             app.Run();
         }

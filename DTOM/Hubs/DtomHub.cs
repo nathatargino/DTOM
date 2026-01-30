@@ -64,29 +64,33 @@ namespace DTOM.Hubs
         {
             try
             {
-                if (string.IsNullOrWhiteSpace(youtubeUrl))
-                {
-                    await Clients.Caller.SendAsync("MusicError", "URL vazia.");
-                    return;
-                }
+                Console.WriteLine($"[HUB] 🚀 Iniciando extração para: {youtubeUrl}");
 
+                // 1. Extrai a URL real do áudio
                 var streamUrl = await _musicService.GetAudioStreamUrl(youtubeUrl);
 
                 if (!string.IsNullOrWhiteSpace(streamUrl))
                 {
-                    _currentStreamUrl = streamUrl;
-                    _startTime = DateTime.UtcNow;
-                    await Clients.All.SendAsync("PlayMusic", streamUrl, 0);
+                    Console.WriteLine("[HUB] ✅ Sucesso na extração!");
+
+                    // 2. Cria a URL do seu Proxy (que já configuramos)
+                    var proxyUrl = $"/api/music/proxy?url={Uri.EscapeDataString(streamUrl)}";
+
+                    // 3. Avisa todo mundo
+                    await Clients.All.SendAsync("PlayMusic", proxyUrl, 0);
+
+                    // 4. Mensagem no chat para confirmar
+                    await Clients.All.SendAsync("ReceiveMessage", "SISTEMA", "🎶 Sintonizando nova frequência...", DateTime.Now.ToString("HH:mm"));
                 }
                 else
                 {
-                    await Clients.Caller.SendAsync("MusicError", "Não foi possível extrair o áudio.");
+                    Console.WriteLine("[HUB] ❌ O serviço retornou URL vazia.");
+                    await Clients.Caller.SendAsync("ReceiveMessage", "SISTEMA", "⚠️ Não consegui sintonizar esse link. Tente outro vídeo.", DateTime.Now.ToString("HH:mm"));
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[HUB] ❌ EXCEÇÃO: {ex.Message}");
-                await Clients.Caller.SendAsync("MusicError", $"Erro: {ex.Message}");
+                Console.WriteLine($"[HUB] 💥 ERRO: {ex.Message}");
             }
         }
 

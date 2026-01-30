@@ -98,6 +98,14 @@ body {
     box-shadow: 0 0 15px rgba(0, 245, 255, 0.3);
 }
 
+/* --- STATUS DE DESABILITADO APÓS CLICAR NO BOTAO --- */
+    .neon-button:disabled {
+        background: #444 !important;
+        color: #888 !important;
+        box-shadow: none !important;
+        border: 1px solid var(--border-color);
+}
+
 /* --- CHAT E MENSAGENS --- */
 .chat-messages {
     background: #0D1117;
@@ -324,3 +332,4 @@ body {
     .footer-socials a:hover {
         color: var(--neon-color);
     }
+
