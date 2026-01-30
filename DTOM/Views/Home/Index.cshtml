@@ -45,7 +45,13 @@
                     </div>
 
                     <div class="chat-input-container mt-3">
-                        <input type="text" id="chat-input" placeholder="Digite sua mensagem..." class="chat-input" maxlength="500">
+                        <textarea id="chat-input"
+                                  placeholder="Digite sua mensagem..."
+                                  class="chat-input"
+                                  maxlength="500"
+                                  rows="1"
+                                  style="resize:none;"></textarea>
+
                         <button id="btnSendChat" class="chat-send-btn">
                             <i class="bi bi-send-fill"></i>
                         </button>
@@ -56,9 +62,18 @@
             <div class="col-lg-4">
                 <div class="dtom-card sidebar h-100">
                     <div class="d-flex justify-content-between align-items-center mb-3">
-                        <h5 class="m-0">Canais de Voz</h5>
-                        <button id="btnJoinVoice" class="voice-join-btn">
-                            <i class="bi bi-mic-fill"></i> ENTRAR
+                        <h5 class="m-0 me-auto">Canais de Voz</h5>
+
+                        <button id="uiCallMute" class="btn btn-sm audio-config-btn me-1" type="button" style="height: 31px;">
+                            <i class="bi bi-volume-mute-fill"></i>
+                        </button>
+
+                        <button id="uiMicMute" class="btn btn-sm audio-config-btn me-1" type="button" style="height: 31px;">
+                            <i class="bi bi-mic-mute-fill"></i>
+                        </button>
+
+                        <button id="btnJoinVoice" class="voice-join-btn btn btn-sm d-flex align-items-center" style="height: 31px; line-height: 1;">
+                            <i class="bi bi-mic-fill me-1"></i> ENTRAR
                         </button>
                     </div>
 
@@ -98,6 +113,4 @@
     </div>
 </div>
 
-<div id="yt-host"
-     style="width:0;height:0;overflow:hidden;position:absolute;left:-9999px;top:-9999px;">
-</div>
+<div id="yt-host" style="width:0;height:0;overflow:hidden;"></div>

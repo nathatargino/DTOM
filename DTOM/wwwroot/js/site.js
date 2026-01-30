@@ -3,22 +3,31 @@
 let connection;
 let audioPlayer, statusBadge, playerStatus, musicUrlInput;
 let userListElement, chatMessagesElement, chatInputElement, chatSendButton;
-let currentUserName = "";
 
-// WebRTC -
+// Persistência
+const LS_USER = "dtom_username_v1";
+
+// WebRTC
+let inCall = false;
 let localStream = null;
 let peerConnections = {};
-const rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+// ICE candidates podem chegar antes do remoteDescription; guardamos até estar pronto.
+const pendingIce = {};
+const rtcConfig = {
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+    bundlePolicy: "max-bundle",
+    rtcpMuxPolicy: "require"
+};
 
-// YouTube Embed (Opção A)
+// YouTube IFrame API
 let ytPlayer = null;
 let ytReady = false;
-let pendingYT = null; // { videoId, startTime }
 let ytUnlocked = false;
+let currentMusicToken = 0;
+let suppressEndedNotify = false;
 
 document.addEventListener("DOMContentLoaded", function () {
-    // --- 1) Elementos ---
-    audioPlayer = document.getElementById("dtomPlayer"); // pode ficar (não atrapalha)
+    audioPlayer = document.getElementById("dtomPlayer");
     statusBadge = document.getElementById("connection-status");
     playerStatus = document.getElementById("player-status");
     musicUrlInput = document.getElementById("musicUrl");
@@ -27,22 +36,22 @@ document.addEventListener("DOMContentLoaded", function () {
     chatInputElement = document.getElementById("chat-input");
     chatSendButton = document.getElementById("btnSendChat");
 
+    window.DTOMAudioUI?.initUI?.();
+
     const loginModalElement = document.getElementById("loginModal");
     const loginModal = loginModalElement ? new bootstrap.Modal(loginModalElement) : null;
     const userNameInput = document.getElementById("userNameInput");
     const btnConfirmLogin = document.getElementById("btnConfirmLogin");
 
-    // --- 2) SignalR ---
     connection = new signalR.HubConnectionBuilder()
         .withUrl("/dtomHub")
         .withAutomaticReconnect()
         .build();
 
-    // --- 3) Usuários & Chat ---
+    // Users
     connection.on("UpdateUserList", (users) => {
         if (!userListElement) return;
         userListElement.innerHTML = "";
-
         (users || []).forEach((user) => {
             const div = document.createElement("div");
             div.className = "user-item-modern";
@@ -52,9 +61,9 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     });
 
+    // Chat
     connection.on("ReceiveMessage", (userName, message, timestamp) => {
         if (!chatMessagesElement) return;
-
         const div = document.createElement("div");
         div.className = "chat-message";
         div.innerHTML = `<strong>${escapeHtml(userName)}:</strong> <span>${escapeHtml(message)}</span> <small>${escapeHtml(timestamp)}</small>`;
@@ -62,42 +71,30 @@ document.addEventListener("DOMContentLoaded", function () {
         chatMessagesElement.scrollTop = chatMessagesElement.scrollHeight;
     });
 
-    // Se ainda existir evento antigo no Hub, não quebra:
-    connection.on("PlayMusic", (streamUrl, startTime) => {
-        console.warn("⚠️ Evento PlayMusic recebido, mas o projeto está em Opção A (YouTube embed). Ignorando:", streamUrl, startTime);
-    });
-
-    // --- 4) YouTube helpers ---
-    async function loadYouTubeApiOnce() {
+    // ===== YouTube =====
+    function loadYouTubeApiOnce() {
         return new Promise((resolve) => {
             if (window.YT && window.YT.Player) {
                 ytReady = true;
                 return resolve();
             }
-
             const tag = document.createElement("script");
             tag.src = "https://www.youtube.com/iframe_api";
-
             const prev = window.onYouTubeIframeAPIReady;
             window.onYouTubeIframeAPIReady = () => {
                 try { if (typeof prev === "function") prev(); } catch { }
                 ytReady = true;
                 resolve();
             };
-
             document.head.appendChild(tag);
         });
     }
 
     async function ensureYTPlayer() {
         const host = document.getElementById("yt-host");
-        if (!host) {
-            console.warn("⚠️ Falta a div #yt-host no HTML.");
-            return null;
-        }
+        if (!host) return null;
 
         await loadYouTubeApiOnce();
-
         if (ytPlayer) return ytPlayer;
 
         return new Promise((resolve) => {
@@ -110,20 +107,22 @@ document.addEventListener("DOMContentLoaded", function () {
                     controls: 0,
                     rel: 0,
                     playsinline: 1,
-                    // ✅ ESSENCIAL em produção
                     origin: window.location.origin
                 },
                 events: {
                     onReady: () => {
-                        // registra no módulo de áudio (se existir)
-                        window.DTOMAudioSettings?.setYouTubePlayer?.(ytPlayer);
-
+                        window.DTOMAudioUI?.setYouTubePlayer?.(ytPlayer);
+                        if (!inCall) {
+                            try { ytPlayer.mute(); ytPlayer.pauseVideo(); } catch { }
+                        }
                         resolve(ytPlayer);
-
-                        // toca pendente
-                        if (pendingYT) {
-                            playYouTube(pendingYT.videoId, pendingYT.startTime);
-                            pendingYT = null;
+                    },
+                    onStateChange: (e) => {
+                        if (e.data === YT.PlayerState.ENDED) {
+                            if (suppressEndedNotify) return;
+                            if (inCall && currentMusicToken) {
+                                connection.invoke("MusicEnded", currentMusicToken).catch(() => { });
+                            }
                         }
                     },
                     onError: (e) => console.error("YT error:", e)
@@ -132,50 +131,101 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     }
 
-    function playYouTube(videoId, startTime) {
-        const start = Math.max(0, Math.floor(Number(startTime) || 0));
-
-        // se ainda não pronto, guarda e sai
-        if (!ytReady || !ytPlayer) {
-            pendingYT = { videoId, startTime };
-            ensureYTPlayer();
-            return;
-        }
-
+    function stopYouTubeLocal() {
+        if (!ytPlayer) return;
         try {
-            ytPlayer.loadVideoById({ videoId, startSeconds: start });
-            ytPlayer.playVideo();
+            suppressEndedNotify = true;
+            ytPlayer.stopVideo();
+        } catch { }
+        try { ytPlayer.mute(); } catch { }
+        setTimeout(() => { suppressEndedNotify = false; }, 500);
+        if (playerStatus) playerStatus.innerText = "Música parada";
+    }
 
-            // gesto do usuário → desmuta
+    async function playYouTube(videoId, startSeconds, token) {
+        currentMusicToken = Number(token) || 0;
+        if (!inCall) return stopYouTubeLocal();
+
+        const p = await ensureYTPlayer();
+        if (!p) return;
+
+        const start = Math.max(0, Math.floor(Number(startSeconds) || 0));
+        try {
+            suppressEndedNotify = true;
+            p.loadVideoById({ videoId, startSeconds: start });
+            p.playVideo();
+
             if (ytUnlocked) {
-                try { ytPlayer.unMute(); } catch { }
+                try { p.unMute(); } catch { }
             } else {
-                try { ytPlayer.mute(); } catch { }
+                try { p.mute(); } catch { }
             }
 
-            if (playerStatus) playerStatus.innerText = "Sintonizado: Transmissão ativa (YouTube)";
-        } catch (e) {
-            console.error("playYouTube erro:", e);
+            if (playerStatus) playerStatus.innerText = "Música tocando (YouTube)";
+        } finally {
+            setTimeout(() => { suppressEndedNotify = false; }, 500);
         }
     }
 
-    // ✅ Listener do Hub para música (FALTAVA NO SEU TRECHO)
-    connection.on("PlayYouTube", (videoId, startTime) => {
-        console.log("📡 PlayYouTube recebido:", videoId, startTime);
-        playYouTube(videoId, startTime);
+    async function pauseYouTube(atSeconds, token) {
+        currentMusicToken = Number(token) || currentMusicToken;
+        const p = await ensureYTPlayer();
+        if (!p) return;
+        if (!inCall) return stopYouTubeLocal();
+
+        try {
+            suppressEndedNotify = true;
+            p.pauseVideo();
+            const t = Math.max(0, Number(atSeconds) || 0);
+            try { p.seekTo(t, true); } catch { }
+            if (!ytUnlocked) p.mute();
+            if (playerStatus) playerStatus.innerText = "Música pausada";
+        } finally {
+            setTimeout(() => { suppressEndedNotify = false; }, 500);
+        }
+    }
+
+    // Eventos do Hub
+    connection.on("PlayYouTube", (videoId, startSeconds, token) => playYouTube(videoId, startSeconds, token));
+    connection.on("PauseYouTube", (_videoId, atSeconds, token) => pauseYouTube(atSeconds, token));
+    connection.on("StopYouTube", (_token) => { currentMusicToken = 0; stopYouTubeLocal(); });
+
+    // ===== WebRTC =====
+    connection.on("ExistingVoiceUsers", (ids) => {     
+        for (const id of (ids || [])) {
+            if (!id || id === connection.connectionId) continue;
+            if (peerConnections[id]) continue;
+            createPeerConnection(id);
+        }
     });
 
-    // --- 5) WebRTC signaling ---
     connection.on("UserJoinedVoice", async (senderId) => {
+        if (!senderId || senderId === connection.connectionId) return;
+
+        
+        if (!inCall || !localStream) return;
+
         const pc = createPeerConnection(senderId);
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        await connection.invoke("SendOffer", senderId, offer);
+
+        try {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            await connection.invoke("SendOffer", senderId, offer);
+        } catch (e) {
+            console.error("Erro criando offer para", senderId, e);
+        }
     });
 
     connection.on("ReceiveOffer", async (senderId, offer) => {
         const pc = createPeerConnection(senderId);
+
+        // Segurança extra contra colisão de ofertas (glare): se não estiver estável, fazemos rollback.
+        if (pc.signalingState !== "stable") {
+            try { await pc.setLocalDescription({ type: "rollback" }); } catch { }
+        }
+
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
+        await flushPendingIce(senderId);
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         await connection.invoke("SendAnswer", senderId, answer);
@@ -183,12 +233,24 @@ document.addEventListener("DOMContentLoaded", function () {
 
     connection.on("ReceiveAnswer", async (senderId, answer) => {
         const pc = peerConnections[senderId];
-        if (pc) await pc.setRemoteDescription(new RTCSessionDescription(answer));
+        if (!pc) return;
+        await pc.setRemoteDescription(new RTCSessionDescription(answer));
+        await flushPendingIce(senderId);
     });
 
     connection.on("ReceiveIceCandidate", async (senderId, candidate) => {
-        const pc = peerConnections[senderId];
-        if (pc) await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        if (!candidate || !senderId) return;
+
+        // Pode chegar ICE antes do pc existir (ou antes do offer/answer). Criamos/bufferizamos.
+        const pc = peerConnections[senderId] || createPeerConnection(senderId);
+
+        // Se o remoteDescription ainda não existe, guardamos e aplicamos depois.
+        if (!pc.remoteDescription || !pc.remoteDescription.type) {
+            (pendingIce[senderId] ||= []).push(candidate);
+            return;
+        }
+
+        try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch { }
     });
 
     connection.on("UserLeftVoice", (userId) => {
@@ -196,90 +258,101 @@ document.addEventListener("DOMContentLoaded", function () {
             peerConnections[userId].close();
             delete peerConnections[userId];
         }
+        delete pendingIce[userId];
+        window.DTOMAudioUI?.stopSpeaking?.(userId);
+        const el = document.getElementById(`remote-audio-${userId}`);
+        if (el) el.remove();
     });
 
-    // --- 6) Start Hub + Modal login ---
-    connection.start().then(() => {
+    async function flushPendingIce(peerId) {
+        const pc = peerConnections[peerId];
+        const list = pendingIce[peerId];
+        if (!pc || !list || !list.length) return;
+        if (!pc.remoteDescription || !pc.remoteDescription.type) return;
+
+        for (const c of list.splice(0, list.length)) {
+            try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch { }
+        }
+        if (!pendingIce[peerId]?.length) delete pendingIce[peerId];
+    }
+
+    // ===== Start + login persistente =====
+    connection.start().then(async () => {
         if (statusBadge) {
             statusBadge.innerHTML = '<span class="dot"></span> Online';
             statusBadge.classList.add("connected");
         }
 
-        if (loginModal) {
-            loginModal.show();
-            loginModalElement.addEventListener("shown.bs.modal", () => userNameInput?.focus());
+        const savedName = safeGetLS(LS_USER);
+        if (userNameInput && savedName) userNameInput.value = savedName;
+
+        if (savedName) {
+            await connection.invoke("SetUserName", savedName).catch(() => { });
+            loginModal?.hide();
+        } else {
+            loginModal?.show();
+            loginModalElement?.addEventListener("shown.bs.modal", () => userNameInput?.focus());
         }
 
-        // pré-carrega player do YouTube
         ensureYTPlayer();
-    }).catch((err) => console.error("Erro SignalR:", err));
+    }).catch(err => console.error("Erro SignalR:", err));
 
     function performLogin() {
         let userName = (userNameInput?.value || "").trim();
         if (!userName) userName = "Anônimo_" + Math.floor(Math.random() * 100);
-
-        currentUserName = userName;
+        safeSetLS(LS_USER, userName);
 
         connection.invoke("SetUserName", userName)
             .then(() => {
                 addSystemMessage(`Bem-vindo à rede, ${userName}!`);
                 loginModal?.hide();
             })
-            .catch((err) => {
-                console.error("❌ Erro no SetUserName:", err);
-                addSystemMessage("❌ Não consegui acessar a rede (erro no servidor). Veja o console.");
-            });
+            .catch(() => addSystemMessage("❌ Não consegui acessar a rede."));
     }
 
     btnConfirmLogin?.addEventListener("click", performLogin);
-    userNameInput?.addEventListener("keypress", (e) => {
-        if (e.key === "Enter") performLogin();
-    });
+    userNameInput?.addEventListener("keydown", (e) => { if (e.key === "Enter") performLogin(); });
 
-    // --- 7) Chat send ---
+    // ===== Chat: Enter envia / Ctrl+Enter quebra =====
     function handleSendMessage() {
-        const msg = (chatInputElement?.value || "").trim();
+        const msg = (chatInputElement?.value || "").trimEnd();
         if (!msg) return;
 
         connection.invoke("SendMessage", msg)
-            .then(() => {
-                chatInputElement.value = "";
-                chatInputElement.focus();
-            })
-            .catch((err) => console.error("Erro SendMessage:", err));
+            .then(() => { chatInputElement.value = ""; chatInputElement.focus(); })
+            .catch(() => addSystemMessage("❌ Erro ao enviar mensagem."));
     }
 
     chatSendButton?.addEventListener("click", handleSendMessage);
-    chatInputElement?.addEventListener("keypress", (e) => {
-        if (e.key === "Enter") handleSendMessage();
+    chatInputElement?.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") return;
+        if (e.ctrlKey || e.metaKey) return; // quebra linha
+        e.preventDefault();
+        handleSendMessage();
     });
 
-    // --- 8) Botão música ---
+    // ===== Música: adiciona na fila =====
     document.getElementById("btnTransmitir")?.addEventListener("click", async function () {
         const btn = this;
         const url = (musicUrlInput?.value || "").trim();
         if (!url) return;
 
-        // gesto do usuário libera som
+        if (!inCall) {
+            addSystemMessage("⚠️ Entre na call para adicionar músicas na fila.");
+            return;
+        }
+
         ytUnlocked = true;
         try { ytPlayer?.unMute(); } catch { }
 
         btn.disabled = true;
-
         connection.invoke("RequestMusic", url)
-            .then(() => {
-                musicUrlInput.value = "";
-            })
-            .catch(err => {
-                console.error("❌ ERRO NO INVOKE:", err);
-                addSystemMessage("❌ Erro ao chamar o servidor.");
-            })
-            .finally(() => {
-                btn.disabled = false;
-            });
+            .then(() => { musicUrlInput.value = ""; })
+            .catch(() => addSystemMessage("❌ Erro ao adicionar música."))
+            .finally(() => { btn.disabled = false; });
     });
 
-    // --- 9) Voz (WebRTC) ---
+    // ===== Voz =====
     document.getElementById("btnJoinVoice")?.addEventListener("click", joinVoice);
 
     async function joinVoice() {
@@ -288,12 +361,15 @@ document.addEventListener("DOMContentLoaded", function () {
 
         if (btn.classList.contains("active")) {
             leaveVoice();
-            connection.invoke("LeaveVoice").catch(() => { });
+            await connection.invoke("LeaveVoice").catch(() => { });
             return;
         }
 
         try {
-            localStream = await navigator.mediaDevices.getUserMedia({
+            // Garante que o AudioContext (singleton) está liberado por gesto do usuário
+            await window.DTOMAudioUI?.unlock?.();
+
+            const raw = await navigator.mediaDevices.getUserMedia({
                 audio: {
                     channelCount: 1,
                     echoCancellation: false,
@@ -302,16 +378,23 @@ document.addEventListener("DOMContentLoaded", function () {
                 }
             });
 
+            localStream = await window.DTOMAudioUI.processMicStream(raw);
+            window.DTOMAudioUI.setMicTrack?.(raw.getAudioTracks()[0]);
+
+            inCall = true;
             btn.classList.add("active");
             btn.innerText = "SAIR";
             btn.style.backgroundColor = "#ff4444";
 
             addSystemMessage("🎙️ Você entrou na call.");
-            monitorVolume(localStream, connection.connectionId);
+            window.DTOMAudioUI?.monitorSpeaking?.(localStream, connection.connectionId);
 
-            await connection.invoke("JoinVoice");
+            await connection.invoke("JoinVoice"); // <-- aqui vem ExistingVoiceUsers + sync música
+
+            ytUnlocked = true;
+            try { ytPlayer?.unMute(); } catch { }
         } catch (err) {
-            console.error("Erro microfone:", err);
+            console.error(err);
             addSystemMessage("❌ Falha no microfone.");
         }
     }
@@ -320,13 +403,21 @@ document.addEventListener("DOMContentLoaded", function () {
         const btn = document.getElementById("btnJoinVoice");
         if (!btn) return;
 
+        inCall = false;
+
+        // Para o efeito de speaking glow do usuário local
+        window.DTOMAudioUI?.stopSpeaking?.(connection?.connectionId);
+
         for (let id in peerConnections) {
             peerConnections[id].close();
             delete peerConnections[id];
+            delete pendingIce[id];
+            window.DTOMAudioUI?.stopSpeaking?.(id);
         }
+        document.querySelectorAll("[id^='remote-audio-']").forEach(el => el.remove());
 
         if (localStream) {
-            localStream.getTracks().forEach((track) => track.stop());
+            localStream.getTracks().forEach(t => t.stop());
             localStream = null;
         }
 
@@ -335,19 +426,24 @@ document.addEventListener("DOMContentLoaded", function () {
         btn.style.backgroundColor = "";
 
         addSystemMessage("🔇 Você saiu da call.");
+        stopYouTubeLocal();
     }
 
     function createPeerConnection(senderId) {
+        if (peerConnections[senderId]) return peerConnections[senderId];
+
         const pc = new RTCPeerConnection(rtcConfig);
         peerConnections[senderId] = pc;
 
+
         if (localStream) {
-            localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
+            localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
         }
 
         pc.ontrack = (e) => {
-            const container = document.getElementById("remote-audios") || document.body;
+            if (!inCall) return;
 
+            const container = document.getElementById("remote-audios") || document.body;
             let audio = document.getElementById(`remote-audio-${senderId}`);
             if (!audio) {
                 audio = document.createElement("audio");
@@ -357,11 +453,17 @@ document.addEventListener("DOMContentLoaded", function () {
                 container.appendChild(audio);
             }
 
-            audio.srcObject = e.streams[0];
-            audio.play().catch(() => { });
+            // fallback se e.streams vier vazio (alguns casos)
+            const remoteStream = (e.streams && e.streams[0]) ? e.streams[0] : new MediaStream([e.track]);
 
-            monitorVolume(e.streams[0], senderId);
+            audio.srcObject = remoteStream;
+            audio.muted = false;
+            audio.volume = 1.0;
+            audio.play().catch(console.warn);
+            monitorVolume(remoteStream, senderId);
         };
+
+
 
         pc.onicecandidate = (e) => {
             if (e.candidate) connection.invoke("SendIceCandidate", senderId, e.candidate);
@@ -370,36 +472,9 @@ document.addEventListener("DOMContentLoaded", function () {
         return pc;
     }
 
-    function monitorVolume(stream, connectionId) {
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const source = audioContext.createMediaStreamSource(stream);
-        const analyser = audioContext.createAnalyser();
-        analyser.fftSize = 256;
-        source.connect(analyser);
-
-        const dataArray = new Uint8Array(analyser.frequencyBinCount);
-
-        function checkVolume() {
-            analyser.getByteFrequencyData(dataArray);
-            let values = 0;
-            for (let i = 0; i < dataArray.length; i++) values += dataArray[i];
-
-            const average = values / dataArray.length;
-            const userDiv = document.getElementById(`user-${connectionId}`);
-
-            if (userDiv) {
-                if (average > 15) userDiv.classList.add("speaking-glow");
-                else userDiv.classList.remove("speaking-glow");
-            }
-
-            requestAnimationFrame(checkVolume);
-        }
-
-        checkVolume();
-    }
+    // speaking glow agora é gerenciado pelo DTOMAudioUI (AudioContext singleton)
 });
 
-// helpers fora
 function escapeHtml(t) {
     const d = document.createElement("div");
     d.textContent = String(t ?? "");
@@ -407,15 +482,21 @@ function escapeHtml(t) {
 }
 
 function addSystemMessage(m) {
-    const chatMessagesElement = document.getElementById("chat-messages");
-    if (!chatMessagesElement) return;
-
+    const el = document.getElementById("chat-messages");
+    if (!el) return;
     const div = document.createElement("div");
     div.className = "chat-message";
     div.style.fontStyle = "italic";
     div.style.opacity = "0.8";
-    div.innerHTML = `<span style="color: #6E7681;"><i class="bi bi-info-circle me-1"></i> ${escapeHtml(m)}</span>`;
+    div.innerHTML = `<span style="color:#6E7681;"><i class="bi bi-info-circle me-1"></i> ${escapeHtml(m)}</span>`;
+    el.appendChild(div);
+    el.scrollTop = el.scrollHeight;
+}
 
-    chatMessagesElement.appendChild(div);
-    chatMessagesElement.scrollTop = chatMessagesElement.scrollHeight;
+function safeGetLS(key) {
+    try { return localStorage.getItem(key) || ""; } catch { return ""; }
+}
+
+function safeSetLS(key, val) {
+    try { localStorage.setItem(key, String(val)); } catch { }
 }

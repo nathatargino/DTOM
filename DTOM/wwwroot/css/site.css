@@ -199,6 +199,20 @@ body {
     text-transform: uppercase;
 }
 
+.audio-config-btn {
+    background: transparent;
+    border: 1px solid var(--neon-color);
+    color: var(--neon-color);
+    font-size: 1em;
+    font-weight: bold;
+    padding: 0px 5px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    text-transform: uppercase;
+}
+
+
     .voice-join-btn.active {
         background: var(--danger-neon) !important;
         border-color: var(--danger-neon) !important;

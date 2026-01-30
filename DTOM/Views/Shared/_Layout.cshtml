@@ -3,6 +3,16 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self';
+               connect-src 'self' https: wss:;
+               img-src 'self' data: https:;
+               script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://www.youtube.com https://www.gstatic.com;
+               style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com;
+               font-src 'self' data: https://cdn.jsdelivr.net https://fonts.gstatic.com;
+               frame-src 'self' https://www.youtube.com;
+               media-src 'self' blob: https:;">
+
     <title>@ViewData["Title"] - DTOM</title>
     <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
 
@@ -45,6 +55,45 @@
                         </li>
                     </ul>
                 </div>
+                <div class="dropdown">
+                    <button class="btn btn-sm btn-dark border-cyan"
+                            id="btnAudioSettings"
+                            data-bs-toggle="dropdown"
+                            aria-expanded="false"
+                            title="Configurações de áudio"
+                            type="button">
+                        <i class="bi bi-gear-fill text-cyan"></i>
+                    </button>
+
+                    <div class="dropdown-menu dropdown-menu-end p-3" style="min-width: 320px;">
+                        <div class="mb-3">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <label class="form-label m-0">Volume YouTube</label>
+                                <small id="uiYtVolLabel" class="text-muted">100%</small>
+                            </div>
+                            <input id="uiYtVol" type="range" class="form-range" min="0" max="100" value="100">
+                        </div>
+
+                        <div class="mb-3">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <label class="form-label m-0">Meu microfone</label>
+                                <small id="uiMicVolLabel" class="text-muted">100%</small>
+                            </div>
+                            <input id="uiMicVol" type="range" class="form-range" min="0" max="200" value="100">
+                        </div>
+
+                        <div class="mb-2">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <label class="form-label m-0">Áudio dos participantes</label>
+                                <small id="uiRemoteVolLabel" class="text-muted">100%</small>
+                            </div>
+                            <input id="uiRemoteVol" type="range" class="form-range" min="0" max="200" value="100">
+                        </div>
+                        <div class="d-flex gap-2 mt-3">
+                            <button id="uiAudioReset" class="btn btn-sm btn-outline-secondary w-100 mt-2" type="button">Reset</button>
+                        </div>
+                    </div>
+                </div>
             </div>
         </nav>
     </header>
@@ -64,13 +113,13 @@
 
                 <div class="footer-credits">
                     Desenvolvido por
-                    <a href="https://github.com/natha-targino" target="_blank" class="dev-name">Nathã Targino</a>
+                    <a href="https://github.com/nathatargino" target="_blank" class="dev-name">Nathã Targino</a>
                 </div>
 
                 <div class="footer-socials">
-                    <a href="mailto:nathatargino.dev@gmail.com" title="Contato"><i class="bi bi-envelope-at"></i></a>
-                    <a href="#" title="LinkedIn"><i class="bi bi-linkedin"></i></a>
-                    <a href="https://github.com/natha-targino" title="GitHub"><i class="bi bi-github"></i></a>
+                    <a href="mailto:nathatargino.dev@gmail.com" target="_blank" title="Contato"><i class="bi bi-envelope-at"></i></a>
+                    <a href="https://www.linkedin.com/in/nathatargino/" target="_blank" title="LinkedIn"><i class="bi bi-linkedin"></i></a>
+                    <a href="https://github.com/nathatargino" target="_blank" title="GitHub"><i class="bi bi-github"></i></a>
                 </div>
             </div>
         </div>
@@ -79,6 +128,7 @@
     <script src="~/lib/jquery/dist/jquery.min.js"></script>
     <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
     <script src="~/lib/microsoft/signalr/dist/browser/signalr.js"></script>
+    <script src="~/js/audio-ui.js" asp-append-version="true"></script>
     <script src="~/js/site.js" asp-append-version="true"></script>
     @await RenderSectionAsync("Scripts", required: false)
 </body>
