@@ -46,9 +46,7 @@ jobs:
     - name: Azure Login
       uses: azure/login@v2
       with:
-        client-id: ${{ vars.DTOM_CLIENT_ID_3717 }}
-        tenant-id: ${{ vars.DTOM_TENANT_ID_0D34 }}
-        subscription-id: ${{ vars.DTOM_SUBSCRIPTION_ID_0D34 }}
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
     - name: Deploy to Azure WebApp
       uses: azure/webapps-deploy@v2
       with:
