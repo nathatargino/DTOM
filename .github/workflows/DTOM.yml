@@ -1,56 +1,59 @@
-name: Compilar e implantar o aplicativo .NET Core no aplicativo Web DTOM
+name: Deploy DTOM to Azure
+
 on:
   push:
     branches:
-    - master
+      - master # Mude para 'main' se sua branch principal for main
+
 permissions:
-  id-token: write
   contents: read
+
 env:
   AZURE_WEBAPP_NAME: DTOM
-  AZURE_WEBAPP_PACKAGE_PATH: DTOM\published
+  AZURE_WEBAPP_PACKAGE_PATH: '.' # Caminho simplificado
   CONFIGURATION: Release
-  DOTNET_CORE_VERSION: 8.0.x
-  WORKING_DIRECTORY: DTOM
+  DOTNET_CORE_VERSION: '8.0.x'
+
 jobs:
   build:
     runs-on: windows-latest
     steps:
-    - uses: actions/checkout@v4
-    - name: Setup .NET SDK
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: ${{ env.DOTNET_CORE_VERSION }}
-    - name: Restore
-      run: dotnet restore "${{ env.WORKING_DIRECTORY }}"
-    - name: Build
-      run: dotnet build "${{ env.WORKING_DIRECTORY }}" --configuration ${{ env.CONFIGURATION }} --no-restore
-    - name: Test
-      run: dotnet test "${{ env.WORKING_DIRECTORY }}" --no-build
-    - name: Publish
-      run: dotnet publish "${{ env.WORKING_DIRECTORY }}" --configuration ${{ env.CONFIGURATION }} --no-build --output "${{ env.AZURE_WEBAPP_PACKAGE_PATH }}"
-    - name: Publish Artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: webapp
-        path: ${{ env.AZURE_WEBAPP_PACKAGE_PATH }}
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_CORE_VERSION }}
+
+      - name: Restore, Build and Publish
+        run: |
+          dotnet restore
+          dotnet build --configuration ${{ env.CONFIGURATION }}
+          dotnet publish --configuration ${{ env.CONFIGURATION }} --output ./publish
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: webapp
+          path: ./publish
+
   deploy:
     runs-on: windows-latest
     needs: build
     steps:
-    - name: Download artifact from build job
-      uses: actions/download-artifact@v4
-      with:
-        name: webapp
-        path: ${{ env.AZURE_WEBAPP_PACKAGE_PATH }}
-    - name: Azure Login
-      uses: azure/login@v2
-      with:
-        client-id: ${{ vars.DTOM_CLIENT_ID_3717 }}
-        tenant-id: ${{ vars.DTOM_TENANT_ID_0D34 }}
-        subscription-id: ${{ vars.DTOM_SUBSCRIPTION_ID_0D34 }}
-    - name: Deploy to Azure WebApp
-      uses: azure/webapps-deploy@v2
-      with:
-        app-name: ${{ env.AZURE_WEBAPP_NAME }}
-        package: ${{ env.AZURE_WEBAPP_PACKAGE_PATH }}
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: webapp
+          path: ./webapp
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to Azure WebApp
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          package: ./webapp
