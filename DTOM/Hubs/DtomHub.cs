@@ -1,22 +1,19 @@
 ﻿using Microsoft.AspNetCore.SignalR;
 using System.Collections.Concurrent;
-using DTOM.Services;
+using System.Text.RegularExpressions;
+using YoutubeExplode;
+using YoutubeExplode.Videos;
+
 
 namespace DTOM.Hubs
 {
     public class DtomHub : Hub
     {
-        private readonly MusicService _musicService;
         private static readonly ConcurrentDictionary<string, string> Users = new();
 
-        // Estado global da música (opcional, para sincronizar quem entrar depois)
-        private static string? _currentStreamUrl;
+        // Estado global do YouTube (para sincronizar quem entrar depois)
+        private static string? _currentVideoId;
         private static DateTime? _startTimeUtc;
-
-        public DtomHub(MusicService musicService)
-        {
-            _musicService = musicService;
-        }
 
         public async Task SetUserName(string name)
         {
@@ -29,10 +26,10 @@ namespace DTOM.Hubs
             await Clients.All.SendAsync("UpdateUserList", userListData);
 
             // Se já tem música tocando, sincroniza só o caller
-            if (!string.IsNullOrWhiteSpace(_currentStreamUrl) && _startTimeUtc.HasValue)
+            if (!string.IsNullOrWhiteSpace(_currentVideoId) && _startTimeUtc.HasValue)
             {
                 var elapsedSeconds = (DateTime.UtcNow - _startTimeUtc.Value).TotalSeconds;
-                await Clients.Caller.SendAsync("PlayMusic", _currentStreamUrl, elapsedSeconds);
+                await Clients.Caller.SendAsync("PlayYouTube", _currentVideoId, elapsedSeconds);
             }
         }
 
@@ -49,20 +46,15 @@ namespace DTOM.Hubs
         public async Task RequestMusic(string youtubeUrl)
         {
             if (string.IsNullOrWhiteSpace(youtubeUrl))
-            {
-                await Clients.Caller.SendAsync("ReceiveMessage", "SISTEMA", "⚠️ Cole um link do YouTube.", DateTime.Now.ToString("HH:mm"));
                 return;
-            }
+            var videoId = VideoId.Parse(youtubeUrl);
 
-            // O front vai tocar via endpoint do controller
-            var streamEndpoint = $"/api/music/stream?youtubeUrl={Uri.EscapeDataString(youtubeUrl)}";
-
-            _currentStreamUrl = streamEndpoint;
+            _currentVideoId = videoId.Value;
             _startTimeUtc = DateTime.UtcNow;
 
-            await Clients.All.SendAsync("PlayMusic", streamEndpoint, 0);
-            await Clients.All.SendAsync("ReceiveMessage", "SISTEMA", "🎶 Sintonizando nova frequência...", DateTime.Now.ToString("HH:mm"));
+            await Clients.All.SendAsync("PlayYouTube", videoId.Value, 0);
         }
+
 
         public async Task SendMessage(string message)
         {
@@ -76,5 +68,25 @@ namespace DTOM.Hubs
 
         public Task JoinVoice() =>
             Clients.Others.SendAsync("UserJoinedVoice", Context.ConnectionId);
+
+        // Suporta: watch?v=, youtu.be/, shorts/, embed/
+        private static string? ExtractYouTubeVideoId(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return null;
+
+            var m = Regex.Match(url, @"v=([A-Za-z0-9_-]{11})");
+            if (m.Success) return m.Groups[1].Value;
+
+            m = Regex.Match(url, @"youtu\.be\/([A-Za-z0-9_-]{11})");
+            if (m.Success) return m.Groups[1].Value;
+
+            m = Regex.Match(url, @"shorts\/([A-Za-z0-9_-]{11})");
+            if (m.Success) return m.Groups[1].Value;
+
+            m = Regex.Match(url, @"embed\/([A-Za-z0-9_-]{11})");
+            if (m.Success) return m.Groups[1].Value;
+
+            return null;
+        }
     }
 }
