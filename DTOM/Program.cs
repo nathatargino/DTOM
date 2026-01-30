@@ -1,5 +1,6 @@
-using DTOM.Services;
+ï»¿using DTOM.Services;
 using DTOM.Hubs;
+using System.Net;
 
 namespace DTOM
 {
@@ -9,21 +10,24 @@ namespace DTOM
         {
             var builder = WebApplication.CreateBuilder(args);
 
-            // Add services to the container.
             builder.Services.AddControllersWithViews();
-
-            // 1. Habilita o SignalR
             builder.Services.AddSignalR();
 
-            // 2. Suporte ao HttpClient (Essencial para o Proxy de Áudio)
+            // âœ… HttpClient padrÃ£o 
             builder.Services.AddHttpClient();
 
-            // 3. Registro do serviço de música (Apenas uma vez)
+            // âœ… HttpClient ESPECÃFICO
+            builder.Services.AddHttpClient("yt")
+                .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+                {
+                    AutomaticDecompression = DecompressionMethods.None 
+                });
+
+            // MusicService
             builder.Services.AddSingleton<MusicService>();
 
             var app = builder.Build();
 
-            // Configure the HTTP request pipeline.
             if (!app.Environment.IsDevelopment())
             {
                 app.UseExceptionHandler("/Home/Error");
@@ -34,14 +38,12 @@ namespace DTOM
             app.UseStaticFiles();
 
             app.UseRouting();
-
             app.UseAuthorization();
 
             app.MapControllerRoute(
                 name: "default",
                 pattern: "{controller=Home}/{action=Index}/{id?}");
 
-            // 4. Mapeia o Hub do SignalR
             app.MapHub<DtomHub>("/dtomHub");
 
             app.Run();
