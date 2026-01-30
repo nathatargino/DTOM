@@ -22,7 +22,7 @@ html {
 }
 
 body {
-    margin-bottom: 60px;
+    margin-bottom: 15px;
     background-color: var(--bg-color);
     color: var(--text-main);
     font-family: 'Inter', sans-serif;
@@ -317,33 +317,35 @@ body {
     background-color: #0B0E11;
     border-top: 1px solid var(--border-color);
     padding: 20px 0;
-    position: absolute;
-    bottom: 0;
     width: 100%;
     font-size: 0.85rem;
     color: #6E7681;
+   
 }
 
-.dev-name {
-    color: var(--neon-color);
-    text-decoration: none;
-    font-weight: 600;
-    transition: all 0.3s;
-}
-
-    .dev-name:hover {
-        text-shadow: 0 0 8px var(--neon-color);
-        color: white;
+    
+    .dtom-footer .footer-credits a.dev-name {
+        color: var(--neon-color) !important;
+        text-decoration: none !important;
+        font-weight: 600;
+        transition: all 0.3s ease;
+        
+        text-shadow: 0 0 5px rgba(0, 245, 255, 0.4);
     }
 
+        .dtom-footer .footer-credits a.dev-name:hover {
+            color: #FFFFFF !important;
+            text-shadow: 0 0 10px var(--neon-color), 0 0 20px var(--neon-color);
+        }
+
 .footer-socials a {
-    color: #6E7681;
+    color: #6E7681 !important;
     font-size: 1.1rem;
     margin-left: 15px;
-    transition: color 0.2s;
+    transition: all 0.2s;
 }
 
     .footer-socials a:hover {
-        color: var(--neon-color);
+        color: var(--neon-color) !important;
+        text-shadow: 0 0 8px var(--neon-color);
     }
-
