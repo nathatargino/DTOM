@@ -1,14 +1,5 @@
 ﻿"use strict";
 
-/**
- * DTOM - site.js (COMPLETO)
- * - SignalR: usuários, chat, música (YouTube Embed - Opção A), voz (WebRTC signaling)
- * - IDs esperados no HTML:
- *   #dtomPlayer, #connection-status, #player-status, #musicUrl, #user-list, #chat-messages,
- *   #chat-input, #btnSendChat, #btnTransmitir, #btnJoinVoice, #loginModal, #userNameInput, #btnConfirmLogin
- *   + (opção A) #yt-host  (div invisível do YouTube)
- */
-
 let connection;
 let audioPlayer, statusBadge, playerStatus, musicUrlInput;
 let userListElement, chatMessagesElement, chatInputElement, chatSendButton;
@@ -71,116 +62,7 @@ document.addEventListener("DOMContentLoaded", function () {
         chatMessagesElement.scrollTop = chatMessagesElement.scrollHeight;
     });
 
-  
-    // --- 4) YouTube Embed ---
-
-    let ytPlayer = null;
-    let ytReady = false;
-    let pendingYT = null; // { videoId, startTime }
-    let ytUnlocked = false;
-
-    function loadYouTubeApiOnce() {
-        return new Promise((resolve) => {
-            if (window.YT && window.YT.Player) return resolve();
-
-            const tag = document.createElement("script");
-            tag.src = "https://www.youtube.com/iframe_api";
-
-            const prev = window.onYouTubeIframeAPIReady;
-            window.onYouTubeIframeAPIReady = () => {
-                try { if (typeof prev === "function") prev(); } catch { }
-                ytReady = true;
-                resolve();
-            };
-
-            document.head.appendChild(tag);
-        });
-    }
-
-    async function ensureYTPlayer() {
-        const host = document.getElementById("yt-host");
-        if (!host) {
-            console.warn("⚠️ Falta a div #yt-host no HTML.");
-            return null;
-        }
-
-        await loadYouTubeApiOnce();
-
-        if (ytPlayer) return ytPlayer;
-
-        return new Promise((resolve) => {
-            ytPlayer = new YT.Player("yt-host", {
-                height: "0",
-                width: "0",
-                videoId: "",
-                playerVars: { autoplay: 1, controls: 0, rel: 0, playsinline: 1 },
-                events: {
-                    onReady: () => {
-                        resolve(ytPlayer);
-                        if (pendingYT) {
-                            playYouTube(pendingYT.videoId, pendingYT.startTime);
-                            pendingYT = null;
-                        }
-                    },
-                    onError: (e) => console.error("YT error:", e)
-                }
-            });
-        });
-    }
-
-    async function playYouTube(videoId, startTime) {
-        const p = await ensureYTPlayer();
-        if (!p) return;
-
-        const start = Math.max(0, Math.floor(Number(startTime) || 0));
-
-        // autoplay-friendly: começa mutado
-        try { p.mute(); } catch { }
-
-        try {
-            p.loadVideoById({ videoId, startSeconds: start });
-            p.playVideo();
-
-            // se o usuário já clicou, libera som
-            setTimeout(() => {
-                if (ytUnlocked) {
-                    try { p.unMute(); } catch { }
-                }
-            }, 700);
-
-            console.log("✅ YouTube tocando:", videoId, "start:", start);
-            if (playerStatus) playerStatus.innerText = "Sintonizado: Transmissão ativa (YouTube)";
-        } catch (e) {
-            console.error("❌ Falha ao tocar YouTube:", e);
-            addSystemMessage("❌ Falha ao iniciar YouTube.");
-        }
-    }
-
-    // Listener do Hub (novo evento)
-    connection.on("PlayYouTube", (videoId, startTime) => {
-        console.log("📡 PlayYouTube recebido:", videoId, startTime);
-
-        if (!ytReady) {
-            pendingYT = { videoId, startTime };
-            ensureYTPlayer();
-            return;
-        }
-
-        playYouTube(videoId, startTime);
-    });
-
-    // Libera som no clique do usuário (use um clique que já existe no seu app)
-    document.getElementById("btnTransmitir")?.addEventListener("click", () => {
-        ytUnlocked = true;
-        try { if (ytPlayer) ytPlayer.unMute(); } catch { }
-    });
-    document.addEventListener("click", () => { ytUnlocked = true; }, { once: true });
-
-    // (opcional) pré-carrega o player
-    ensureYTPlayer();
-
-
-    // (Opcional) Se ainda existir evento antigo no Hub, não quebra:
+    // Se ainda existir evento antigo no Hub, não quebra:
     connection.on("PlayMusic", (streamUrl, startTime) => {
         console.warn("⚠️ Evento PlayMusic recebido, mas o projeto está em Opção A (YouTube embed). Ignorando:", streamUrl, startTime);
     });
@@ -287,7 +169,7 @@ document.addEventListener("DOMContentLoaded", function () {
         const url = (musicUrlInput?.value || "").trim();
         if (!url) return;
 
-        // desbloqueia som do YouTube após gesto do usuário
+        // libera som do YouTube (gesto do usuário)
         ytUnlocked = true;
         try { if (ytPlayer) ytPlayer.unMute(); } catch { }
 
@@ -296,14 +178,13 @@ document.addEventListener("DOMContentLoaded", function () {
         btn.innerHTML = '<i class="bi bi-hourglass-split"></i> ADICIONAR';
 
         console.log("2. Chamando connection.invoke('RequestMusic')...");
-        connection
-            .invoke("RequestMusic", url)
+        connection.invoke("RequestMusic", url)
             .then(() => {
                 console.log("3. O Servidor respondeu ao Invoke com sucesso!");
                 musicUrlInput.value = "";
                 addSystemMessage("🚀 Requisição enviada. Aguarde o processamento do servidor.");
             })
-            .catch((err) => {
+            .catch(err => {
                 console.error("❌ ERRO NO INVOKE:", err);
                 addSystemMessage("❌ Erro ao chamar o servidor.");
             })
@@ -329,23 +210,25 @@ document.addEventListener("DOMContentLoaded", function () {
     // --- YouTube helpers ---
     async function loadYouTubeApiOnce() {
         return new Promise((resolve) => {
-            if (window.YT && window.YT.Player) return resolve();
+            if (window.YT && window.YT.Player) {
+                ytReady = true;
+                return resolve();
+            }
 
             const tag = document.createElement("script");
             tag.src = "https://www.youtube.com/iframe_api";
 
-            // se já existe callback, preserva e chama os dois
             const prev = window.onYouTubeIframeAPIReady;
             window.onYouTubeIframeAPIReady = () => {
-                try {
-                    if (typeof prev === "function") prev();
-                } catch { }
+                try { if (typeof prev === "function") prev(); } catch { }
+                ytReady = true;
                 resolve();
             };
 
             document.head.appendChild(tag);
         });
     }
+
 
     async function ensureYTPlayer() {
         const host = document.getElementById("yt-host");
@@ -432,12 +315,19 @@ document.addEventListener("DOMContentLoaded", function () {
         // toggle simples
         if (btn.classList.contains("active")) {
             leaveVoice();
+            connection.invoke("LeaveVoice").catch(() => { });
             return;
         }
 
         try {
             localStream = await navigator.mediaDevices.getUserMedia({
-                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+                audio: {
+                    channelCount: 1,
+                    echoCancellation: false,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                    sampleRate: 48000
+                }
             });
 
             btn.classList.add("active");
@@ -487,9 +377,20 @@ document.addEventListener("DOMContentLoaded", function () {
         }
 
         pc.ontrack = (e) => {
-            const a = new Audio();
-            a.srcObject = e.streams[0];
-            a.play().catch(() => { });
+            const container = document.getElementById("remote-audios") || document.body;
+
+            let audio = document.getElementById(`remote-audio-${senderId}`);
+            if (!audio) {
+                audio = document.createElement("audio");
+                audio.id = `remote-audio-${senderId}`;
+                audio.autoplay = true;
+                audio.playsInline = true;
+                container.appendChild(audio);
+            }
+
+            audio.srcObject = e.streams[0];
+            audio.play().catch(() => { }); 
+
             monitorVolume(e.streams[0], senderId);
         };
 
