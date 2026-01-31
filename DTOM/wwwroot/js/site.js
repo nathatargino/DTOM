@@ -1,25 +1,29 @@
 ﻿"use strict";
 
+/**
+ * Declaração de variáveis de estado global e referências de UI
+ */
 let connection;
 let audioPlayer, statusBadge, playerStatus, musicUrlInput;
 let userListElement, chatMessagesElement, chatInputElement, chatSendButton;
 
-// Persistência
+/** @constant {string} Chave para persistência do nome de usuário no LocalStorage */
 const LS_USER = "dtom_username_v1";
 
-// WebRTC
+/** * Estado e configurações do protocolo WebRTC para comunicação de voz
+ */
 let inCall = false;
 let localStream = null;
 let peerConnections = {};
-// ICE candidates podem chegar antes do remoteDescription; guardamos até estar pronto.
-const pendingIce = {};
+const pendingIce = {}; // Buffer para candidatos ICE recebidos antes da sinalização
 const rtcConfig = {
     iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
     bundlePolicy: "max-bundle",
     rtcpMuxPolicy: "require"
 };
 
-// YouTube IFrame API
+/** * Estado e flags de controle para a integração com a API do YouTube
+ */
 let ytPlayer = null;
 let ytReady = false;
 let ytUnlocked = false;
@@ -27,6 +31,7 @@ let currentMusicToken = 0;
 let suppressEndedNotify = false;
 
 document.addEventListener("DOMContentLoaded", function () {
+    // Inicialização de referências do DOM
     audioPlayer = document.getElementById("dtomPlayer");
     statusBadge = document.getElementById("connection-status");
     playerStatus = document.getElementById("player-status");
@@ -43,12 +48,16 @@ document.addEventListener("DOMContentLoaded", function () {
     const userNameInput = document.getElementById("userNameInput");
     const btnConfirmLogin = document.getElementById("btnConfirmLogin");
 
+    // Configuração da conexão SignalR (Hub)
     connection = new signalR.HubConnectionBuilder()
         .withUrl("/dtomHub")
         .withAutomaticReconnect()
         .build();
 
-    // Users
+    /**
+     * Listener para atualização da lista de usuários conectados
+     * @param {Array} users Lista de objetos de usuário
+     */
     connection.on("UpdateUserList", (users) => {
         if (!userListElement) return;
         userListElement.innerHTML = "";
@@ -61,7 +70,9 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     });
 
-    // Chat
+    /**
+     * Listener para recebimento de mensagens de chat
+     */
     connection.on("ReceiveMessage", (userName, message, timestamp) => {
         if (!chatMessagesElement) return;
         const div = document.createElement("div");
@@ -71,7 +82,12 @@ document.addEventListener("DOMContentLoaded", function () {
         chatMessagesElement.scrollTop = chatMessagesElement.scrollHeight;
     });
 
-    // ===== YouTube =====
+    // ===== YouTube Functions =====
+
+    /**
+     * Carrega o script da API do YouTube IFrame caso não esteja presente
+     * @returns {Promise<void>}
+     */
     function loadYouTubeApiOnce() {
         return new Promise((resolve) => {
             if (window.YT && window.YT.Player) {
@@ -90,6 +106,10 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     }
 
+    /**
+     * Garante que a instância do Player do YouTube esteja inicializada
+     * @returns {Promise<YT.Player>}
+     */
     async function ensureYTPlayer() {
         const host = document.getElementById("yt-host");
         if (!host) return null;
@@ -131,6 +151,9 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     }
 
+    /**
+     * Para a reprodução do YouTube localmente e reseta flags de notificação
+     */
     function stopYouTubeLocal() {
         if (!ytPlayer) return;
         try {
@@ -142,6 +165,9 @@ document.addEventListener("DOMContentLoaded", function () {
         if (playerStatus) playerStatus.innerText = "Música parada";
     }
 
+    /**
+     * Inicia ou sincroniza a reprodução de um vídeo do YouTube
+     */
     async function playYouTube(videoId, startSeconds, token) {
         currentMusicToken = Number(token) || 0;
         if (!inCall) return stopYouTubeLocal();
@@ -167,6 +193,9 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     }
 
+    /**
+     * Pausa a reprodução do YouTube em um tempo específico
+     */
     async function pauseYouTube(atSeconds, token) {
         currentMusicToken = Number(token) || currentMusicToken;
         const p = await ensureYTPlayer();
@@ -185,13 +214,17 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     }
 
-    // Eventos do Hub
+    // Handlers de eventos do Hub para controle de mídia
     connection.on("PlayYouTube", (videoId, startSeconds, token) => playYouTube(videoId, startSeconds, token));
     connection.on("PauseYouTube", (_videoId, atSeconds, token) => pauseYouTube(atSeconds, token));
     connection.on("StopYouTube", (_token) => { currentMusicToken = 0; stopYouTubeLocal(); });
 
-    // ===== WebRTC =====
-    connection.on("ExistingVoiceUsers", (ids) => {     
+    // ===== WebRTC Events =====
+
+    /**
+     * Sincroniza conexões com usuários que já estão na chamada de voz
+     */
+    connection.on("ExistingVoiceUsers", (ids) => {
         for (const id of (ids || [])) {
             if (!id || id === connection.connectionId) continue;
             if (peerConnections[id]) continue;
@@ -199,14 +232,14 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     });
 
+    /**
+     * Inicia o handshake WebRTC (Offer) quando um novo usuário entra na voz
+     */
     connection.on("UserJoinedVoice", async (senderId) => {
         if (!senderId || senderId === connection.connectionId) return;
-
-        
         if (!inCall || !localStream) return;
 
         const pc = createPeerConnection(senderId);
-
         try {
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
@@ -216,14 +249,14 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     });
 
+    /**
+     * Processa a oferta WebRTC recebida e responde com uma Answer
+     */
     connection.on("ReceiveOffer", async (senderId, offer) => {
         const pc = createPeerConnection(senderId);
-
-        // Segurança extra contra colisão de ofertas (glare): se não estiver estável, fazemos rollback.
         if (pc.signalingState !== "stable") {
             try { await pc.setLocalDescription({ type: "rollback" }); } catch { }
         }
-
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
         await flushPendingIce(senderId);
         const answer = await pc.createAnswer();
@@ -231,6 +264,9 @@ document.addEventListener("DOMContentLoaded", function () {
         await connection.invoke("SendAnswer", senderId, answer);
     });
 
+    /**
+     * Finaliza o handshake ao receber a resposta do par remoto
+     */
     connection.on("ReceiveAnswer", async (senderId, answer) => {
         const pc = peerConnections[senderId];
         if (!pc) return;
@@ -238,21 +274,23 @@ document.addEventListener("DOMContentLoaded", function () {
         await flushPendingIce(senderId);
     });
 
+    /**
+     * Adiciona candidatos ICE recebidos para estabelecer a conexão P2P
+     */
     connection.on("ReceiveIceCandidate", async (senderId, candidate) => {
         if (!candidate || !senderId) return;
-
-        // Pode chegar ICE antes do pc existir (ou antes do offer/answer). Criamos/bufferizamos.
         const pc = peerConnections[senderId] || createPeerConnection(senderId);
 
-        // Se o remoteDescription ainda não existe, guardamos e aplicamos depois.
         if (!pc.remoteDescription || !pc.remoteDescription.type) {
             (pendingIce[senderId] ||= []).push(candidate);
             return;
         }
-
         try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch { }
     });
 
+    /**
+     * Finaliza a conexão e limpa recursos quando um usuário sai da voz
+     */
     connection.on("UserLeftVoice", (userId) => {
         if (peerConnections[userId]) {
             peerConnections[userId].close();
@@ -264,6 +302,9 @@ document.addEventListener("DOMContentLoaded", function () {
         if (el) el.remove();
     });
 
+    /**
+     * Aplica candidatos ICE que foram armazenados no buffer enquanto a conexão não estava pronta
+     */
     async function flushPendingIce(peerId) {
         const pc = peerConnections[peerId];
         const list = pendingIce[peerId];
@@ -276,7 +317,8 @@ document.addEventListener("DOMContentLoaded", function () {
         if (!pendingIce[peerId]?.length) delete pendingIce[peerId];
     }
 
-    // ===== Start + login persistente =====
+    // ===== Inicialização e Login =====
+
     connection.start().then(async () => {
         if (statusBadge) {
             statusBadge.innerHTML = '<span class="dot"></span> Online';
@@ -297,6 +339,9 @@ document.addEventListener("DOMContentLoaded", function () {
         ensureYTPlayer();
     }).catch(err => console.error("Erro SignalR:", err));
 
+    /**
+     * Realiza o processo de login e define o nome do usuário no sistema
+     */
     function performLogin() {
         let userName = (userNameInput?.value || "").trim();
         if (!userName) userName = "Anônimo_" + Math.floor(Math.random() * 100);
@@ -313,7 +358,8 @@ document.addEventListener("DOMContentLoaded", function () {
     btnConfirmLogin?.addEventListener("click", performLogin);
     userNameInput?.addEventListener("keydown", (e) => { if (e.key === "Enter") performLogin(); });
 
-    // ===== Chat: Enter envia / Ctrl+Enter quebra =====
+    // ===== Chat Event Listeners =====
+
     function handleSendMessage() {
         const msg = (chatInputElement?.value || "").trimEnd();
         if (!msg) return;
@@ -326,12 +372,13 @@ document.addEventListener("DOMContentLoaded", function () {
     chatSendButton?.addEventListener("click", handleSendMessage);
     chatInputElement?.addEventListener("keydown", (e) => {
         if (e.key !== "Enter") return;
-        if (e.ctrlKey || e.metaKey) return; // quebra linha
+        if (e.ctrlKey || e.metaKey) return;
         e.preventDefault();
         handleSendMessage();
     });
 
-    // ===== Música: adiciona na fila =====
+    // ===== Music Event Listeners =====
+
     document.getElementById("btnTransmitir")?.addEventListener("click", async function () {
         const btn = this;
         const url = (musicUrlInput?.value || "").trim();
@@ -352,9 +399,13 @@ document.addEventListener("DOMContentLoaded", function () {
             .finally(() => { btn.disabled = false; });
     });
 
-    // ===== Voz =====
+    // ===== Voice Event Listeners =====
+
     document.getElementById("btnJoinVoice")?.addEventListener("click", joinVoice);
 
+    /**
+     * Gerencia a entrada do usuário na chamada de voz e captura do microfone
+     */
     async function joinVoice() {
         const btn = document.getElementById("btnJoinVoice");
         if (!btn) return;
@@ -366,7 +417,6 @@ document.addEventListener("DOMContentLoaded", function () {
         }
 
         try {
-            // Garante que o AudioContext (singleton) está liberado por gesto do usuário
             await window.DTOMAudioUI?.unlock?.();
 
             const raw = await navigator.mediaDevices.getUserMedia({
@@ -389,7 +439,7 @@ document.addEventListener("DOMContentLoaded", function () {
             addSystemMessage("🎙️ Você entrou na call.");
             window.DTOMAudioUI?.monitorSpeaking?.(localStream, connection.connectionId);
 
-            await connection.invoke("JoinVoice"); // <-- aqui vem ExistingVoiceUsers + sync música
+            await connection.invoke("JoinVoice");
 
             ytUnlocked = true;
             try { ytPlayer?.unMute(); } catch { }
@@ -399,13 +449,14 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     }
 
+    /**
+     * Finaliza a participação na chamada e limpa streams locais e remotos
+     */
     function leaveVoice() {
         const btn = document.getElementById("btnJoinVoice");
         if (!btn) return;
 
         inCall = false;
-
-        // Para o efeito de speaking glow do usuário local
         window.DTOMAudioUI?.stopSpeaking?.(connection?.connectionId);
 
         for (let id in peerConnections) {
@@ -429,12 +480,15 @@ document.addEventListener("DOMContentLoaded", function () {
         stopYouTubeLocal();
     }
 
+    /**
+     * Cria uma nova RTCPeerConnection para um par específico
+     * @param {string} senderId
+     */
     function createPeerConnection(senderId) {
         if (peerConnections[senderId]) return peerConnections[senderId];
 
         const pc = new RTCPeerConnection(rtcConfig);
         peerConnections[senderId] = pc;
-
 
         if (localStream) {
             localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
@@ -453,17 +507,16 @@ document.addEventListener("DOMContentLoaded", function () {
                 container.appendChild(audio);
             }
 
-            // fallback se e.streams vier vazio (alguns casos)
             const remoteStream = (e.streams && e.streams[0]) ? e.streams[0] : new MediaStream([e.track]);
 
             audio.srcObject = remoteStream;
             audio.muted = false;
             audio.volume = 1.0;
             audio.play().catch(console.warn);
-            monitorVolume(remoteStream, senderId);
+            window.DTOMAudioUI?.monitorSpeaking?.(remoteStream, senderId);
+            // Nota: monitorVolume deve estar definido globalmente ou em DTOMAudioUI
+            if (typeof monitorVolume === "function") monitorVolume(remoteStream, senderId);
         };
-
-
 
         pc.onicecandidate = (e) => {
             if (e.candidate) connection.invoke("SendIceCandidate", senderId, e.candidate);
@@ -471,16 +524,20 @@ document.addEventListener("DOMContentLoaded", function () {
 
         return pc;
     }
-
-    // speaking glow agora é gerenciado pelo DTOMAudioUI (AudioContext singleton)
 });
 
+/**
+ * Escapa caracteres HTML para prevenir ataques de Cross-Site Scripting (XSS)
+ */
 function escapeHtml(t) {
     const d = document.createElement("div");
     d.textContent = String(t ?? "");
     return d.innerHTML;
 }
 
+/**
+ * Adiciona uma mensagem de sistema no log do chat
+ */
 function addSystemMessage(m) {
     const el = document.getElementById("chat-messages");
     if (!el) return;
@@ -493,10 +550,16 @@ function addSystemMessage(m) {
     el.scrollTop = el.scrollHeight;
 }
 
+/**
+ * Lê valores do LocalStorage de forma segura
+ */
 function safeGetLS(key) {
     try { return localStorage.getItem(key) || ""; } catch { return ""; }
 }
 
+/**
+ * Grava valores no LocalStorage de forma segura
+ */
 function safeSetLS(key, val) {
     try { localStorage.setItem(key, String(val)); } catch { }
 }

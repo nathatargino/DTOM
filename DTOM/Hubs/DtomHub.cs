@@ -4,26 +4,42 @@ using System.Text.RegularExpressions;
 
 namespace DTOM.Hubs
 {
+    /// <summary>
+    /// Hub principal para gerenciamento de chat, chamadas de voz e sincronização de música.
+    /// Utiliza estados estáticos para persistência em memória durante o ciclo de vida da aplicação.
+    /// </summary>
     public class DtomHub : Hub
     {
         private const string VoiceGroup = "VOICE";
 
-        // Usuários conectados (nome)
+        // Gerenciamento de Identidade: Mapeia ConnectionId -> Nome do Usuário
         private static readonly ConcurrentDictionary<string, string> Users = new();
 
-        // Quem está dentro da call
+        // Gerenciamento de Presença na Call: Mapeia ConnectionId -> Ativo
         private static readonly ConcurrentDictionary<string, bool> VoiceUsers = new();
 
-        // ===== Música (fila) =====
+        #region Estado Global de Música
+
         private static readonly object MusicLock = new();
-        private static readonly Queue<string> MusicQueue = new(); // videoIds
+        private static readonly Queue<string> MusicQueue = new();
         private static string? CurrentVideoId;
         private static DateTime? StartUtc;
         private static bool IsPaused;
         private static double PausedAtSeconds;
-        private static long PlayToken; // incrementa a cada troca (evita race)
 
-        // ====== Usuários / Lista ======
+        /// <summary>
+        /// Token incremental para evitar condições de corrida (Race Conditions) 
+        /// entre comandos de Play/Stop de diferentes usuários.
+        /// </summary>
+        private static long PlayToken;
+
+        #endregion
+
+        #region Gerenciamento de Usuários
+
+        /// <summary>
+        /// Define o nome de exibição do usuário e atualiza a lista global.
+        /// </summary>
         public async Task SetUserName(string name)
         {
             if (string.IsNullOrWhiteSpace(name))
@@ -39,21 +55,26 @@ namespace DTOM.Hubs
         {
             Users.TryRemove(Context.ConnectionId, out _);
 
-            // remove da call (se estava)
+            // Se o usuário estava em uma chamada, remove do grupo e notifica os pares
             if (VoiceUsers.TryRemove(Context.ConnectionId, out _))
             {
                 await Groups.RemoveFromGroupAsync(Context.ConnectionId, VoiceGroup);
                 await Clients.Group(VoiceGroup).SendAsync("UserLeftVoice", Context.ConnectionId);
             }
 
-            // mantém formato correto {id,name}
             var userListData = Users.Select(u => new { id = u.Key, name = u.Value }).ToList();
             await Clients.All.SendAsync("UpdateUserList", userListData);
 
             await base.OnDisconnectedAsync(exception);
         }
 
-        // ====== Chat (comandos) ======
+        #endregion
+
+        #region Chat e Comandos
+
+        /// <summary>
+        /// Processa mensagens de texto e identifica comandos iniciados por "/".
+        /// </summary>
         public async Task SendMessage(string message)
         {
             if (string.IsNullOrWhiteSpace(message)) return;
@@ -85,37 +106,43 @@ namespace DTOM.Hubs
 
             switch (cmd)
             {
-                case "/skip":
-                    await Skip(userName);
-                    break;
+                case "/play":
                 case "/pause":
                     await TogglePause(userName);
+                    break;
+                case "/skip":
+                    await Skip(userName);
                     break;
                 case "/leave":
                     await StopAndClear(userName);
                     break;
                 default:
                     await Clients.Caller.SendAsync("ReceiveMessage", "SISTEMA",
-                        "⚠️ Comandos: /skip, /pause, /leave", DateTime.Now.ToString("HH:mm"));
+                        "⚠️ Comandos: /play, /pause, /skip, /leave", DateTime.Now.ToString("HH:mm"));
                     break;
             }
         }
 
-        // ====== Voz (Call) ======
+        #endregion
+
+        #region Voz e Sincronização WebRTC
+
+        /// <summary>
+        /// Adiciona o usuário ao grupo de voz e sincroniza o estado atual da música para o novo integrante.
+        /// </summary>
         public async Task JoinVoice()
         {
             VoiceUsers[Context.ConnectionId] = true;
             await Groups.AddToGroupAsync(Context.ConnectionId, VoiceGroup);
 
-            // lista REAL de quem já está na call
+            // Lista de IDs ativos para o handshake P2P no Frontend
             var existing = VoiceUsers.Keys.Where(id => id != Context.ConnectionId).ToList();
             await Clients.Caller.SendAsync("ExistingVoiceUsers", existing);
 
-            // avisa os outros da call
             await Clients.GroupExcept(VoiceGroup, Context.ConnectionId)
                 .SendAsync("UserJoinedVoice", Context.ConnectionId);
 
-            // sincroniza música atual para quem entrou
+            // Captura de Snapshot para sincronização de tempo real da mídia
             (string? vid, bool paused, double atSeconds, long token) snap;
             lock (MusicLock)
             {
@@ -124,10 +151,8 @@ namespace DTOM.Hubs
 
             if (!string.IsNullOrWhiteSpace(snap.vid))
             {
-                if (snap.paused)
-                    await Clients.Caller.SendAsync("PauseYouTube", snap.vid, snap.atSeconds, snap.token);
-                else
-                    await Clients.Caller.SendAsync("PlayYouTube", snap.vid, snap.atSeconds, snap.token);
+                string targetEvent = snap.paused ? "PauseYouTube" : "PlayYouTube";
+                await Clients.Caller.SendAsync(targetEvent, snap.vid, snap.atSeconds, snap.token);
             }
         }
 
@@ -140,7 +165,7 @@ namespace DTOM.Hubs
             }
         }
 
-        // ====== Signaling (WebRTC) ======
+        // Métodos de Signaling WebRTC (Proxy de mensagens SDP/ICE entre Peers)
         public Task SendOffer(string targetId, object offer) =>
             Clients.Client(targetId).SendAsync("ReceiveOffer", Context.ConnectionId, offer);
 
@@ -150,7 +175,13 @@ namespace DTOM.Hubs
         public Task SendIceCandidate(string targetId, object candidate) =>
             Clients.Client(targetId).SendAsync("ReceiveIceCandidate", Context.ConnectionId, candidate);
 
-        // ====== Música: adicionar (fila) ======
+        #endregion
+
+        #region Lógica de Fila de Música
+
+        /// <summary>
+        /// Extrai o ID do vídeo e adiciona à fila global ou inicia a reprodução imediata.
+        /// </summary>
         public async Task RequestMusic(string youtubeUrl)
         {
             if (!VoiceUsers.ContainsKey(Context.ConnectionId))
@@ -189,7 +220,6 @@ namespace DTOM.Hubs
                     MusicQueue.Enqueue(videoId);
                     token = PlayToken;
                 }
-
                 queueCount = MusicQueue.Count;
             }
 
@@ -197,16 +227,15 @@ namespace DTOM.Hubs
             {
                 await Clients.Group(VoiceGroup).SendAsync("PlayYouTube", videoId, 0d, token);
                 await Clients.Group(VoiceGroup).SendAsync("ReceiveMessage", "SISTEMA",
-                    $"🎶 Tocando agora. Fila: {queueCount}", DateTime.Now.ToString("HH:mm"));
+                    $"🎶 Tocando agora. Fila: {queueCount}", DateTime.Now.ToString("HH:mm:ss"));
             }
             else
             {
                 await Clients.Group(VoiceGroup).SendAsync("ReceiveMessage", "SISTEMA",
-                    $"➕ Música adicionada na fila. Posição: {queueCount}", DateTime.Now.ToString("HH:mm"));
+                    $"➕ Adicionada na fila. Posição: {queueCount}", DateTime.Now.ToString("HH:mm:ss"));
             }
         }
 
-        // Cliente avisa que terminou (somente quem está na call)
         public async Task MusicEnded(long token)
         {
             if (!VoiceUsers.ContainsKey(Context.ConnectionId)) return;
@@ -217,12 +246,10 @@ namespace DTOM.Hubs
 
             lock (MusicLock)
             {
-                // ignora callbacks antigos (evita múltiplos usuários dispararem ao mesmo tempo)
                 if (token != PlayToken) return;
 
-                if (MusicQueue.Count > 0)
+                if (MusicQueue.TryDequeue(out next))
                 {
-                    next = MusicQueue.Dequeue();
                     CurrentVideoId = next;
                     IsPaused = false;
                     PausedAtSeconds = 0;
@@ -232,10 +259,7 @@ namespace DTOM.Hubs
                 }
                 else
                 {
-                    CurrentVideoId = null;
-                    IsPaused = false;
-                    PausedAtSeconds = 0;
-                    StartUtc = null;
+                    ResetMusicState();
                     PlayToken++;
                     newToken = PlayToken;
                     stopped = true;
@@ -243,12 +267,9 @@ namespace DTOM.Hubs
             }
 
             if (stopped)
-            {
                 await Clients.Group(VoiceGroup).SendAsync("StopYouTube", newToken);
-                return;
-            }
-
-            await Clients.Group(VoiceGroup).SendAsync("PlayYouTube", next!, 0d, newToken);
+            else
+                await Clients.Group(VoiceGroup).SendAsync("PlayYouTube", next!, 0d, newToken);
         }
 
         private async Task Skip(string userName)
@@ -256,45 +277,37 @@ namespace DTOM.Hubs
             string? next = null;
             long token;
             bool stopped = false;
-            int queueCount;
 
             lock (MusicLock)
             {
-                if (MusicQueue.Count > 0)
+                if (MusicQueue.TryDequeue(out next))
                 {
-                    next = MusicQueue.Dequeue();
                     CurrentVideoId = next;
                     IsPaused = false;
                     PausedAtSeconds = 0;
                     StartUtc = DateTime.UtcNow;
-                    PlayToken++;
-                    token = PlayToken;
                 }
                 else
                 {
-                    CurrentVideoId = null;
-                    IsPaused = false;
-                    PausedAtSeconds = 0;
-                    StartUtc = null;
-                    PlayToken++;
-                    token = PlayToken;
+                    ResetMusicState();
                     stopped = true;
                 }
-
-                queueCount = MusicQueue.Count;
+                PlayToken++;
+                token = PlayToken;
             }
 
             if (stopped)
             {
                 await Clients.Group(VoiceGroup).SendAsync("StopYouTube", token);
                 await Clients.Group(VoiceGroup).SendAsync("ReceiveMessage", "SISTEMA",
-                    $"⏭️ {userName} pulou. Fila vazia — música parada.", DateTime.Now.ToString("HH:mm"));
-                return;
+                    $"⏭️ {userName} pulou. Fila vazia.", DateTime.Now.ToString("HH:mm:ss"));
             }
-
-            await Clients.Group(VoiceGroup).SendAsync("PlayYouTube", next!, 0d, token);
-            await Clients.Group(VoiceGroup).SendAsync("ReceiveMessage", "SISTEMA",
-                $"⏭️ {userName} pulou para a próxima. Fila: {queueCount}", DateTime.Now.ToString("HH:mm"));
+            else
+            {
+                await Clients.Group(VoiceGroup).SendAsync("PlayYouTube", next!, 0d, token);
+                await Clients.Group(VoiceGroup).SendAsync("ReceiveMessage", "SISTEMA",
+                    $"⏭️ {userName} pulou para a próxima.", DateTime.Now.ToString("HH:mm:ss"));
+            }
         }
 
         private async Task TogglePause(string userName)
@@ -325,22 +338,16 @@ namespace DTOM.Hubs
             if (string.IsNullOrWhiteSpace(snap.vid))
             {
                 await Clients.Caller.SendAsync("ReceiveMessage", "SISTEMA",
-                    "⚠️ Não há música para pausar/retomar.", DateTime.Now.ToString("HH:mm"));
+                    "⚠️ Não há música ativa.", DateTime.Now.ToString("HH:mm"));
                 return;
             }
 
-            if (snap.paused)
-            {
-                await Clients.Group(VoiceGroup).SendAsync("PauseYouTube", snap.vid, snap.atSeconds, snap.token);
-                await Clients.Group(VoiceGroup).SendAsync("ReceiveMessage", "SISTEMA",
-                    $"⏸️ {userName} pausou.", DateTime.Now.ToString("HH:mm"));
-            }
-            else
-            {
-                await Clients.Group(VoiceGroup).SendAsync("PlayYouTube", snap.vid, snap.atSeconds, snap.token);
-                await Clients.Group(VoiceGroup).SendAsync("ReceiveMessage", "SISTEMA",
-                    $"▶️ {userName} retomou.", DateTime.Now.ToString("HH:mm"));
-            }
+            string evt = snap.paused ? "PauseYouTube" : "PlayYouTube";
+            string msg = snap.paused ? "⏸️ pausou." : "▶️ retomou.";
+
+            await Clients.Group(VoiceGroup).SendAsync(evt, snap.vid, snap.atSeconds, snap.token);
+            await Clients.Group(VoiceGroup).SendAsync("ReceiveMessage", "SISTEMA",
+                $"{userName} {msg}", DateTime.Now.ToString("HH:mm:ss"));
         }
 
         private async Task StopAndClear(string userName)
@@ -349,17 +356,26 @@ namespace DTOM.Hubs
             lock (MusicLock)
             {
                 MusicQueue.Clear();
-                CurrentVideoId = null;
-                IsPaused = false;
-                PausedAtSeconds = 0;
-                StartUtc = null;
+                ResetMusicState();
                 PlayToken++;
                 token = PlayToken;
             }
 
             await Clients.Group(VoiceGroup).SendAsync("StopYouTube", token);
             await Clients.Group(VoiceGroup).SendAsync("ReceiveMessage", "SISTEMA",
-                $"🛑 {userName} parou a música e limpou a fila.", DateTime.Now.ToString("HH:mm"));
+                $"🛑 {userName} parou a música.", DateTime.Now.ToString("HH:mm:ss"));
+        }
+
+        #endregion
+
+        #region Helpers de Tempo e Regex
+
+        private void ResetMusicState()
+        {
+            CurrentVideoId = null;
+            IsPaused = false;
+            PausedAtSeconds = 0;
+            StartUtc = null;
         }
 
         private static double GetElapsedUnsafe()
@@ -372,19 +388,23 @@ namespace DTOM.Hubs
         {
             if (string.IsNullOrWhiteSpace(url)) return null;
 
-            var m = Regex.Match(url, @"v=([A-Za-z0-9_-]{11})");
-            if (m.Success) return m.Groups[1].Value;
+            // Suporta formatos: standard (v=), youtu.be, shorts e embed
+            var patterns = new[]
+            {
+                @"v=([A-Za-z0-9_-]{11})",
+                @"youtu\.be\/([A-Za-z0-9_-]{11})",
+                @"shorts\/([A-Za-z0-9_-]{11})",
+                @"embed\/([A-Za-z0-9_-]{11})"
+            };
 
-            m = Regex.Match(url, @"youtu\.be\/([A-Za-z0-9_-]{11})");
-            if (m.Success) return m.Groups[1].Value;
-
-            m = Regex.Match(url, @"shorts\/([A-Za-z0-9_-]{11})");
-            if (m.Success) return m.Groups[1].Value;
-
-            m = Regex.Match(url, @"embed\/([A-Za-z0-9_-]{11})");
-            if (m.Success) return m.Groups[1].Value;
-
+            foreach (var p in patterns)
+            {
+                var m = Regex.Match(url, p);
+                if (m.Success) return m.Groups[1].Value;
+            }
             return null;
         }
+
+        #endregion
     }
 }

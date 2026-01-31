@@ -65,33 +65,43 @@
                         <i class="bi bi-gear-fill text-cyan"></i>
                     </button>
 
-                    <div class="dropdown-menu dropdown-menu-end p-3" style="min-width: 320px;">
+                    <div class="dropdown-menu dropdown-menu-dark dropdown-menu-end p-3 shadow-lg"
+                         style="min-width: 320px; background-color: #151921; border: 1px solid #2d333b; border-radius: 12px;">
+
                         <div class="mb-3">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <label class="form-label m-0">Volume YouTube</label>
-                                <small id="uiYtVolLabel" class="text-muted">100%</small>
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <label class="form-label m-0 text-light fw-bold" style="font-size: 0.85rem;">
+                                    <i class="bi bi-youtube me-2 text-danger"></i>Volume YouTube
+                                </label>
+                                <small id="uiYtVolLabel" class="badge bg-dark text-secondary">100%</small>
                             </div>
-                            <input id="uiYtVol" type="range" class="form-range" min="0" max="100" value="100">
+                            <input id="uiYtVol" type="range" class="form-range custom-range" min="0" max="100" value="100">
                         </div>
 
                         <div class="mb-3">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <label class="form-label m-0">Meu microfone</label>
-                                <small id="uiMicVolLabel" class="text-muted">100%</small>
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <label class="form-label m-0 text-light fw-bold" style="font-size: 0.85rem;">
+                                    <i class="bi bi-mic-fill me-2 text-primary"></i>Meu Microfone
+                                </label>
+                                <small id="uiMicVolLabel" class="badge bg-dark text-secondary">100%</small>
                             </div>
-                            <input id="uiMicVol" type="range" class="form-range" min="0" max="200" value="100">
+                            <input id="uiMicVol" type="range" class="form-range custom-range" min="0" max="200" value="100">
                         </div>
 
-                        <div class="mb-2">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <label class="form-label m-0">Áudio dos participantes</label>
-                                <small id="uiRemoteVolLabel" class="text-muted">100%</small>
+                        <div class="mb-4">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <label class="form-label m-0 text-light fw-bold" style="font-size: 0.85rem;">
+                                    <i class="bi bi-people-fill me-2 text-info"></i>Áudio da Call
+                                </label>
+                                <small id="uiRemoteVolLabel" class="badge bg-dark text-secondary">100%</small>
                             </div>
-                            <input id="uiRemoteVol" type="range" class="form-range" min="0" max="200" value="100">
+                            <input id="uiRemoteVol" type="range" class="form-range custom-range" min="0" max="200" value="100">
                         </div>
-                        <div class="d-flex gap-2 mt-3">
-                            <button id="uiAudioReset" class="btn btn-sm btn-outline-secondary w-100 mt-2" type="button">Reset</button>
-                        </div>
+
+                        <button id="uiAudioReset" class="btn btn-sm btn-dark w-100 fw-bold py-2"
+                                style="background-color: #1c212c; border: 1px solid #30363d; border-radius: 8px; transition: 0.3s;">
+                            <i class="bi bi-arrow-counterclockwise me-1"></i> Resetar Áudio
+                        </button>
                     </div>
                 </div>
             </div>

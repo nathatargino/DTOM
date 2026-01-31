@@ -349,3 +349,36 @@ body {
         color: var(--neon-color) !important;
         text-shadow: 0 0 8px var(--neon-color);
     }
+
+
+/* Estilização da barra (trilho) */
+.custom-range::-webkit-slider-runnable-track {
+    background: #21262d;
+    height: 6px;
+    border-radius: 10px;
+}
+
+/* Estilização da "bolinha" (thumb) */
+.custom-range::-webkit-slider-thumb {
+    background: #58a6ff; /* Cor azul clara */
+    border: 2px solid #151921;
+    width: 16px;
+    height: 16px;
+    margin-top: -5px; /* Alinhamento central */
+    box-shadow: 0 0 10px rgba(88, 166, 255, 0.5);
+    transition: transform 0.2s;
+    cursor: pointer;
+}
+
+    /* Efeito ao passar o mouse na bolinha */
+    .custom-range::-webkit-slider-thumb:hover {
+        transform: scale(1.2);
+        background: #79c0ff;
+    }
+
+/* Botão de Reset com Hover */
+#uiAudioReset:hover {
+    background-color: #30363d !important;
+    color: #58a6ff !important;
+    border-color: #58a6ff !important;
+}

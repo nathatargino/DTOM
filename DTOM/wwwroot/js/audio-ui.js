@@ -1,52 +1,56 @@
 ﻿"use strict";
 
 /**
- * DTOMAudioUI
- * - AudioContext Singleton + unlock por gesto (evita autoplay block e áudio mudo)
- * - Mic/Remote via GainNodes (0–200% => 0.0–2.0)
- * - YouTube volume via IFrame API (0–100)
- * - Speaking Glow (analyser por stream, usando o mesmo AudioContext)
- * - bindUi(): reconecta listeners dos sliders e mantém labels / persistência
+ * Módulo DTOMAudioUI
+ * Gerencia a pipeline de áudio do sistema, incluindo integração com YouTube,
+ * processamento de microfone local, áudio remoto via WebRTC e feedback visual de voz.
  */
 window.DTOMAudioUI = (() => {
+    /** @constant {string} Chave para persistência das configurações de áudio no LocalStorage */
     const LS_KEY = "dtom_audio_settings_v1";
 
+    /** @type {Object} Estado interno de volumes e estados de mute */
     const state = {
-        ytVol: 100,      // 0..100 (UI atual)
-        micVol: 100,     // 0..200
-        remoteVol: 100,  // 0..200
+        ytVol: 100,      // Range: 0..100
+        micVol: 100,     // Range: 0..200
+        remoteVol: 100,  // Range: 0..200
         micMuted: false,
         callMuted: false
     };
 
-    // ===== Singleton AudioContext =====
+    // Referências do Web Audio API Singleton
     let audioCtx = null;
     let unlockBound = false;
 
-    // ===== YouTube =====
+    // Instância do Player do YouTube
     let ytPlayer = null;
 
-    // ===== Mic pipeline =====
+    // Referências da Pipeline do Microfone Local
     let micTrack = null;
     let micGain = null;
     let micDest = null;
 
-    // ===== Remote pipelines =====
-    // key: remoteStreamId (ou fallback), value: { gain, dest, userId }
+    /** @type {Map<string, Object>} Pipelines de áudio remoto: { gain, dest, userId } */
     const remotePipes = new Map();
 
-    // ===== Speaking monitor =====
-    // key: userId, value: { analyser, data, rafId, source }
+    /** @type {Map<string, Object>} Monitores de amplitude para efeito de brilho (Glow) */
     const speakingMonitors = new Map();
 
-    // ===== Helpers =====
+    // ===== Funções Utilitárias (Helpers) =====
+
+    /** Limita um número entre um valor mínimo e máximo */
     function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
+
+    /** Converte valor percentual (0-200) para valor de ganho linear (0.0-2.0) */
     function pctToGain(p) { return clamp(p, 0, 200) / 100; }
+
+    /** Realiza o parse seguro de inteiros com valor padrão de fallback */
     function safeInt(v, d = 0) {
         const n = Number.parseInt(v, 10);
         return Number.isFinite(n) ? n : d;
     }
 
+    /** Garante a existência de uma única instância do AudioContext */
     function ensureCtx() {
         if (!audioCtx) {
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -54,6 +58,7 @@ window.DTOMAudioUI = (() => {
         return audioCtx;
     }
 
+    /** Libera o estado do AudioContext (necessário devido a políticas de autoplay de navegadores) */
     async function unlock() {
         try {
             const ctx = ensureCtx();
@@ -61,11 +66,11 @@ window.DTOMAudioUI = (() => {
                 await ctx.resume();
             }
         } catch {
-            // ignore
+            // Falha silenciosa na tentativa de resume
         }
     }
 
-    // Liga um "auto-unlock" (primeiro gesto do usuário)
+    /** Registra listeners globais para desbloquear o áudio no primeiro gesto do usuário */
     function bindUnlockOnce() {
         if (unlockBound) return;
         unlockBound = true;
@@ -82,6 +87,7 @@ window.DTOMAudioUI = (() => {
         window.addEventListener("touchstart", handler, true);
     }
 
+    /** Recupera configurações persistidas do armazenamento local */
     function load() {
         try {
             const raw = localStorage.getItem(LS_KEY);
@@ -93,24 +99,31 @@ window.DTOMAudioUI = (() => {
             if (typeof obj.micMuted === "boolean") state.micMuted = obj.micMuted;
             if (typeof obj.callMuted === "boolean") state.callMuted = obj.callMuted;
         } catch {
-            // ignore
+            // Erro ao carregar ou parsear JSON do LocalStorage
         }
     }
 
+    /** Salva o estado atual das configurações no armazenamento local */
     function save() {
         try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch { }
     }
 
+    /** Aplica o volume atual à instância do player do YouTube */
     function applyYT() {
         if (!ytPlayer || typeof ytPlayer.setVolume !== "function") return;
-        try { ytPlayer.setVolume(clamp(state.ytVol, 0, 100)); } catch { }
+        try {       
+            const volumeFinal = state.callMuted ? 0 : clamp(state.ytVol, 0, 100);
+            ytPlayer.setVolume(volumeFinal);
+        } catch { }
     }
 
+    /** Aplica ganho e estado de mute ao nó de áudio do microfone */
     function applyMic() {
         if (micGain) micGain.gain.value = pctToGain(state.micVol);
         if (micTrack) micTrack.enabled = !state.micMuted;
     }
 
+    /** Atualiza o ganho de todos os fluxos de áudio remotos ativos */
     function applyRemote() {
         const g = state.callMuted ? 0 : pctToGain(state.remoteVol);
         for (const pipe of remotePipes.values()) {
@@ -118,6 +131,7 @@ window.DTOMAudioUI = (() => {
         }
     }
 
+    /** Atualiza o estado global e propaga as mudanças para os nós de áudio e UI */
     function setValues(patch) {
         if (!patch) return;
         if (typeof patch.ytVol === "number") state.ytVol = clamp(patch.ytVol, 0, 100);
@@ -133,12 +147,15 @@ window.DTOMAudioUI = (() => {
         syncUiFromState();
     }
 
-    // ===== UI Binding =====
+    // ===== Gerenciamento de Interface (UI Binding) =====
+
+    /** Atualiza o conteúdo de texto de um label com o valor percentual */
     function setLabel(id, v) {
         const el = document.getElementById(id);
         if (el) el.textContent = `${v}%`;
     }
 
+    /** Sincroniza os elementos de input (sliders) com o estado interno */
     function syncUiFromState() {
         const yt = document.getElementById("uiYtVol");
         const mic = document.getElementById("uiMicVol");
@@ -153,8 +170,8 @@ window.DTOMAudioUI = (() => {
         setLabel("uiRemoteVolLabel", clamp(state.remoteVol, 0, 200));
     }
 
+    /** Inicializa os event listeners dos componentes de UI de áudio */
     function bindUi() {
-        // Sempre que o layout recarregar/partial render, pode chamar de novo.
         bindUnlockOnce();
 
         const yt = document.getElementById("uiYtVol");
@@ -164,6 +181,7 @@ window.DTOMAudioUI = (() => {
         const btnCallMute = document.getElementById("uiCallMute");
         const btnMicMute = document.getElementById("uiMicMute");
 
+        /** Atualiza visualmente os botões de mute (ícones e classes) */
         function syncMuteButtons() {
             if (btnCallMute) {
                 btnCallMute.classList.toggle("active", state.callMuted);
@@ -186,8 +204,16 @@ window.DTOMAudioUI = (() => {
         if (btnCallMute) {
             btnCallMute.onclick = async () => {
                 await unlock();
+
+                // Inverte o estado de mute da "chamada" 
                 state.callMuted = !state.callMuted;
+
+                // 1. Silencia/Restaura os áudios remotos (WebRTC)
                 applyRemote();
+
+                // 2. Silencia/Restaura o player do YouTube
+                applyYT();
+
                 save();
                 syncMuteButtons();
             };
@@ -203,14 +229,11 @@ window.DTOMAudioUI = (() => {
             };
         }
 
-        // chama uma vez ao bind
         syncMuteButtons();
-
-        // Inicializa UI com estado salvo
         syncUiFromState();
 
+        /** Handler disparado ao interagir com os sliders de volume */
         const onInput = async () => {
-            // Slider input também conta como gesto; tenta liberar o AudioContext.
             await unlock();
 
             if (yt) {
@@ -234,7 +257,6 @@ window.DTOMAudioUI = (() => {
             save();
         };
 
-        // Remove listeners antigos (se bindUi for chamado várias vezes)
         const rebind = (el) => {
             if (!el) return;
             el.oninput = null;
@@ -254,10 +276,11 @@ window.DTOMAudioUI = (() => {
         }
     }
 
-    // ===== Mic processing =====
+    // ===== Processamento de Sinais de Áudio =====
+
+    /** Processa a stream bruta do microfone adicionando controle de ganho */
     async function processMicStream(rawStream) {
         ensureCtx();
-
         try {
             const ctx = ensureCtx();
             const source = ctx.createMediaStreamSource(rawStream);
@@ -278,7 +301,7 @@ window.DTOMAudioUI = (() => {
         }
     }
 
-    // ===== Remote processing =====
+    /** Conecta uma stream remota WebRTC a um elemento de áudio via GainNodes */
     function attachRemoteStream(audioEl, remoteStream, userId = null) {
         try {
             ensureCtx();
@@ -317,7 +340,7 @@ window.DTOMAudioUI = (() => {
         }
     }
 
-    // ===== Speaking Glow =====
+    /** Monitora o nível de áudio de uma stream para aplicar efeito visual de fala */
     function monitorSpeaking(stream, userId) {
         if (!stream || !userId) return;
         ensureCtx();
@@ -350,10 +373,11 @@ window.DTOMAudioUI = (() => {
             const rafId = requestAnimationFrame(tick);
             speakingMonitors.set(userId, { analyser, data, rafId, source });
         } catch {
-            // ignore
+            // Erro ao inicializar analyser
         }
     }
 
+    /** Interrompe o monitoramento de fala e remove efeitos visuais */
     function stopSpeaking(userId) {
         const m = speakingMonitors.get(userId);
         if (!m) return;
@@ -366,6 +390,7 @@ window.DTOMAudioUI = (() => {
         if (userDiv) userDiv.classList.remove("speaking-glow");
     }
 
+    /** Inicializa o módulo, carregando dados e vinculando interface */
     function initUI() {
         load();
         bindUi();
@@ -375,6 +400,7 @@ window.DTOMAudioUI = (() => {
         bindUnlockOnce();
     }
 
+    // API Pública do Módulo
     return {
         initUI,
         bindUi,
