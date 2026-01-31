@@ -236,10 +236,13 @@ document.addEventListener("DOMContentLoaded", function () {
      * Inicia o handshake WebRTC (Offer) quando um novo usuário entra na voz
      */
     connection.on("UserJoinedVoice", async (senderId) => {
+        // Proteções básicas
         if (!senderId || senderId === connection.connectionId) return;
         if (!inCall || !localStream) return;
 
+        console.log("👋 Usuário entrou:", senderId, "- Iniciando oferta.");
         const pc = createPeerConnection(senderId);
+
         try {
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
@@ -254,14 +257,41 @@ document.addEventListener("DOMContentLoaded", function () {
      */
     connection.on("ReceiveOffer", async (senderId, offer) => {
         const pc = createPeerConnection(senderId);
+
+        // --- LÓGICA DE DESEMPATE (CRUCIAL) ---
+        const isStable = pc.signalingState === "stable" || (pc.signalingState === "have-local-offer" && !offer);
+
+        // Compara os IDs: Se o meu ID for "menor" alfabeticamente, eu sou o "Polite" (o que cede).
+        // Se o meu for "maior", eu sou o "Impolite" (o que manda).
+        const polite = connection.connectionId.localeCompare(senderId) < 0;
+
+        // Se já estamos negociando (não stable)
         if (pc.signalingState !== "stable") {
-            try { await pc.setLocalDescription({ type: "rollback" }); } catch { }
+            if (!polite) {
+                console.warn(`⚔️ Colisão com ${senderId}: Eu ganhei (Ignorando oferta dele).`);
+                return; // Eu tenho prioridade, ignoro a oferta dele e mantenho a minha.
+            }
+
+            console.log(`🛡️ Colisão com ${senderId}: Eu cedi (Rollback).`);
+            try {
+                await pc.setLocalDescription({ type: "rollback" });
+            } catch (err) {
+                console.error("Erro no rollback", err);
+            }
         }
-        await pc.setRemoteDescription(new RTCSessionDescription(offer));
-        await flushPendingIce(senderId);
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        await connection.invoke("SendAnswer", senderId, answer);
+
+        // --- FIM DA LÓGICA DE DESEMPATE ---
+
+        try {
+            await pc.setRemoteDescription(new RTCSessionDescription(offer));
+            await flushPendingIce(senderId);
+
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            await connection.invoke("SendAnswer", senderId, answer);
+        } catch (e) {
+            console.error("Erro processando oferta de", senderId, e);
+        }
     });
 
     /**
