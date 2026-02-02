@@ -16,11 +16,17 @@ let inCall = false;
 let localStream = null;
 let peerConnections = {};
 const pendingIce = {}; // Buffer para candidatos ICE recebidos antes da sinalização
-const rtcConfig = {
-    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+// Configuração inicial com STUN Google (será enriquecida com TURN via API)
+let rtcConfig = {
+    iceServers: [
+        { urls: "stun:stun.l.google.com:19302" }
+    ],
     bundlePolicy: "max-bundle",
     rtcpMuxPolicy: "require"
 };
+
+// Flag para garantir que as credenciais TURN foram carregadas
+let turnCredentialsReady = false;
 
 /** * Estado e flags de controle para a integração com a API do YouTube
  */
@@ -31,6 +37,22 @@ let currentMusicToken = 0;
 let suppressEndedNotify = false;
 
 document.addEventListener("DOMContentLoaded", function () {
+    // Busca credenciais TURN do backend (CRÍTICO: ANTES de criar qualquer RTCPeerConnection)
+    fetch('/api/turn/credentials')
+        .then(r => r.json())
+        .then(data => {
+            if (data && data.iceServers) {
+                // Mescla os servidores retornados (TURN) com o STUN padrão
+                rtcConfig.iceServers = [...rtcConfig.iceServers, ...data.iceServers];
+                console.log("📡 Chaves TURN recebidas:", data.iceServers);
+            }
+        })
+        .catch(e => console.warn("WebRTC: Falha ao carregar credenciais TURN (usando apenas STUN).", e))
+        .finally(() => {
+            turnCredentialsReady = true;
+            console.log("✅ RTCConfig pronto:", rtcConfig);
+        });
+
     // Inicialização de referências do DOM
     audioPlayer = document.getElementById("dtomPlayer");
     statusBadge = document.getElementById("connection-status");
@@ -525,6 +547,8 @@ document.addEventListener("DOMContentLoaded", function () {
         }
 
         pc.ontrack = (e) => {
+            console.log("🎧 Áudio remoto recebido de:", senderId, "- Tracks:", e.streams[0]?.getTracks().length);
+
             if (!inCall) return;
 
             const container = document.getElementById("remote-audios") || document.body;
@@ -535,6 +559,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 audio.autoplay = true;
                 audio.playsInline = true;
                 container.appendChild(audio);
+                console.log("🔊 Elemento <audio> criado para:", senderId);
             }
 
             const remoteStream = (e.streams && e.streams[0]) ? e.streams[0] : new MediaStream([e.track]);
@@ -550,6 +575,17 @@ document.addEventListener("DOMContentLoaded", function () {
 
         pc.onicecandidate = (e) => {
             if (e.candidate) connection.invoke("SendIceCandidate", senderId, e.candidate);
+        };
+
+        pc.oniceconnectionstatechange = () => {
+            const state = pc.iceConnectionState;
+            console.log(`❄️ Estado da Conexão ICE com ${senderId}:`, state);
+
+            if (state === "connected") {
+                console.log(`✅ Conexão P2P estabelecida com ${senderId}`);
+            } else if (state === "failed" || state === "disconnected") {
+                console.warn(`⚠️ Problema de conexão com ${senderId}. Possível bloqueio de NAT/Firewall.`);
+            }
         };
 
         return pc;

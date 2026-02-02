@@ -11,6 +11,7 @@ namespace DTOM
             // --- Configuração de Serviços ---
             builder.Services.AddControllersWithViews();
             builder.Services.AddSignalR();
+            builder.Services.AddHttpClient();
 
             var app = builder.Build();
 
