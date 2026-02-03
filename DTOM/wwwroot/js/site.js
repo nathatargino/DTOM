@@ -474,7 +474,7 @@ document.addEventListener("DOMContentLoaded", function () {
             const raw = await navigator.mediaDevices.getUserMedia({
                 audio: {
                     channelCount: 1,
-                    echoCancellation: false,
+                    echoCancellation: true,
                     noiseSuppression: true,
                     autoGainControl: true
                 }
