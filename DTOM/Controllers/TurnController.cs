@@ -24,12 +24,12 @@ namespace DTOM.Controllers
         [HttpGet("credentials")]
         public async Task<IActionResult> GetTurnCredentials()
         {
-            var turnKeyId = _configuration["Cloudflare:TurnKeyId"];
-            var apiToken = _configuration["Cloudflare:ApiToken"];
+            var turnKeyId = _configuration["CloudflareTurnKeyId"];
+            var apiToken = _configuration["CloudflareTurnToken"];
 
             // 2. VALIDAÇÃO DE DADOS (Debug)
             // a) URL final será logada abaixo
-            
+
             // b) Validação do ID
             if (string.IsNullOrEmpty(turnKeyId) || turnKeyId.Length != 32)
             {
