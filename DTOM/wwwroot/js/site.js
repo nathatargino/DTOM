@@ -283,15 +283,15 @@ document.addEventListener("DOMContentLoaded", function () {
         // --- LÓGICA DE DESEMPATE (CRUCIAL) ---
         const isStable = pc.signalingState === "stable" || (pc.signalingState === "have-local-offer" && !offer);
 
-        // Compara os IDs: Se o meu ID for "menor" alfabeticamente, eu sou o "Polite" (o que cede).
-        // Se o meu for "maior", eu sou o "Impolite" (o que manda).
+        // Compara os IDs: Se o meu ID for "menor" alfabeticamente, eu sou o "Polite".
+        // Se o meu for "maior", eu sou o "Impolite".
         const polite = connection.connectionId.localeCompare(senderId) < 0;
 
         // Se já estamos negociando (não stable)
         if (pc.signalingState !== "stable") {
             if (!polite) {
                 console.warn(`⚔️ Colisão com ${senderId}: Eu ganhei (Ignorando oferta dele).`);
-                return; // Eu tenho prioridade, ignoro a oferta dele e mantenho a minha.
+                return; 
             }
 
             console.log(`🛡️ Colisão com ${senderId}: Eu cedi (Rollback).`);
